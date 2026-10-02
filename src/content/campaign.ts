@@ -1,0 +1,841 @@
+import { isOperator } from '../math/evaluate';
+import { gridPoint } from '../physics/model';
+import type { Beat, BossPhase, DeviceSpec, Encounter, RailSpec } from '../game/types';
+
+export const CHAPTERS = [
+  {
+    title: 'One Becomes Many',
+    subtitle: 'Every possibility starts with one.',
+    knowledge:
+      'Use whole numbers and basic operations. You will also work with measurement, magnification, and cell division.',
+    numeral: 'I',
+    symbol: '+',
+  },
+  {
+    title: 'Below Zero',
+    subtitle: 'There is something on the other side.',
+    knowledge:
+      'Work with negative numbers, fractions, powers, and square roots. Apply signed speed and solve linear equations.',
+    numeral: 'II',
+    symbol: '−',
+  },
+  {
+    title: 'Balance',
+    subtitle: 'Whatever you do to one side…',
+    knowledge: 'Use equal-arm balances and lever moments. Convert mass to weight with G = mg.',
+    numeral: 'III',
+    symbol: '=',
+  },
+  {
+    title: 'Line of Sight',
+    subtitle: 'Light always keeps its angle.',
+    knowledge: 'Use reflection, the Pythagorean theorem, convex lenses, and straight-line equations.',
+    numeral: 'IV',
+    symbol: '°',
+  },
+  {
+    title: 'Waves',
+    subtitle: 'Everything that moves has a rhythm.',
+    knowledge: 'Read amplitude and frequency, then apply them to sound, heart rate, and wave speed.',
+    numeral: 'V',
+    symbol: '∿',
+  },
+  {
+    title: 'The Unknown',
+    subtitle: 'Every unknown has a value.',
+    knowledge: 'Combine cell division, levers, timing, reflection, and frequency, then solve a quadratic equation.',
+    numeral: 'VI',
+    symbol: '𝑥',
+  },
+];
+
+/** A rail's slots follow its canonical solution: operators get round slots. Nothing is pre-filled. */
+const rail = (label: string, solution: string[], extra: Partial<RailSpec> = {}): RailSpec => ({
+  label,
+  solution,
+  slots: solution.map((t) => (isOperator(t) ? 'operator' : 'value')),
+  effect: 'device',
+  ...extra,
+});
+const beat = (
+  name: string,
+  objective: string,
+  spec: RailSpec,
+  layout: Beat['layout'],
+  rest: Partial<Beat> = {},
+): Beat => ({ name, objective, rail: spec, layout, ...rest });
+const device = (name: string, objective: string, spec: RailSpec, params: DeviceSpec, rest: Partial<Beat> = {}): Beat =>
+  beat(name, objective, spec, 'device', { device: params, ...rest });
+const phase = (
+  name: string,
+  component: string,
+  attack: string,
+  counter: string,
+  spec: RailSpec,
+  hazard: Beat['hazard'],
+  hits: number,
+  rest: Partial<BossPhase> = {},
+): BossPhase => ({
+  name,
+  component,
+  objective: counter,
+  rail: spec,
+  attack,
+  counter,
+  hazard,
+  layout: 'arena',
+  hits,
+  ...rest,
+});
+
+/*
+ * Objectives say what to achieve, never the number or the method. Every value a puzzle needs is in the scene:
+ * tiles, bricks, rulers, stopwatches, counters, labels on loads. `intro` states a law once, when it first matters.
+ */
+export const CAMPAIGN: Encounter[] = [
+  // Chapter I — One Becomes Many
+  {
+    id: 'discovery',
+    chapter: 1,
+    title: 'A small beginning',
+    subtitle: 'You. And one possibility.',
+    kind: 'puzzle',
+    unlock: ['1'],
+    beats: [
+      beat(
+        'First bridge',
+        'Build a bridge across the gap.',
+        rail('Bridge length', ['1', '+', '1'], { effect: 'extend', target: 2 }),
+        'gap',
+        {
+          unlock: ['+'],
+          loose: [
+            ['1', 200, 590],
+            ['+', 440, 590],
+          ],
+          intro: 'E to pick up. E to place. F to make it real.',
+        },
+      ),
+    ],
+  },
+  {
+    id: 'many',
+    chapter: 1,
+    title: 'One becomes many',
+    subtitle: 'Every cell began as one.',
+    kind: 'puzzle',
+    unlock: ['2', '3'],
+    beats: [
+      device(
+        'Division',
+        'Grow a bridge of cells that fills the gap.',
+        rail('Divisions', ['1', '+', '2']),
+        { kind: 'division', cells: 8, size: 0.75 },
+        { enemies: 1, enemyTokens: ['2'], intro: 'A cell divides into two.' },
+      ),
+      device(
+        'A taller wall',
+        'Build steps to the top of the wall.',
+        rail('Steps', ['2', '*', '3']),
+        { kind: 'stairs', height: 6, bricks: true },
+        { unlock: ['*'], stock: ['2', '3', '+', '*'], enemies: 2, enemyTokens: ['1'] },
+      ),
+    ],
+  },
+  {
+    id: 'measure',
+    chapter: 1,
+    title: 'Measure twice',
+    subtitle: 'The world has its own numbers.',
+    kind: 'puzzle',
+    unlock: ['4', '5', '10'],
+    beats: [
+      device(
+        'Read the ruler',
+        'Bridge the gap exactly.',
+        rail('Bridge length · m', ['2', '+', '2'], { units: 'm' }),
+        { kind: 'measure', gap: 4, start: 0 },
+        { intro: 'Lengths are measured in meters.', enemies: 2, enemyTokens: ['4', '+'] },
+      ),
+      device(
+        'Under the lens',
+        'Make the cell’s image fit the lock exactly.',
+        rail('Magnification · eyepiece × objective', ['5', '*', '10']),
+        { kind: 'microscope', mode: 'zoom', specimen: 0.1, gate: 5 },
+        { enemies: 2, enemyTokens: ['5', '10'], hazard: 'bolts' },
+      ),
+    ],
+  },
+  {
+    id: 'applied',
+    chapter: 1,
+    title: 'Applied mathematics',
+    subtitle: 'Put some force behind the idea.',
+    kind: 'action',
+    unlock: [],
+    beats: [
+      device(
+        'Lift off',
+        'Launch yourself onto the high ledge.',
+        rail('Launch height · m', ['2', '*', '3'], { units: 'm' }),
+        { kind: 'launch', height: 6 },
+        { enemies: 3, enemyTokens: ['3', '+', '2'], hazard: 'bolts', noOperatorRack: true, loose: [['*', 60, 590]] },
+      ),
+    ],
+  },
+  // Chapter II — Below Zero
+  {
+    id: 'absence',
+    chapter: 2,
+    title: 'The other way round',
+    subtitle: 'Not everything faces the way you do.',
+    kind: 'puzzle',
+    unlock: ['0', '-'],
+    beats: [
+      device(
+        'A broken ruler',
+        'Bridge the gap exactly.',
+        rail('Bridge length · m', ['7', '-', '3'], { units: 'm' }),
+        { kind: 'measure', gap: 4, start: 3 },
+        { unlock: ['7'], enemies: 2, enemyTokens: ['7', '-'], hazard: 'negative' },
+      ),
+      device(
+        'Upside down',
+        'Bring the cell to the centre of the view.',
+        rail('Slide shift · mm, rightward +', ['0', '-', '3'], { units: 'mm' }),
+        { kind: 'microscope', mode: 'center', offset: -3 },
+        { enemies: 2, enemyTokens: ['3', '0'], hazard: 'negative' },
+      ),
+    ],
+  },
+  {
+    id: 'food',
+    chapter: 2,
+    title: 'Food chain',
+    subtitle: 'Energy thins out on the way up.',
+    kind: 'puzzle',
+    unlock: [],
+    beats: [
+      device(
+        'Energy pyramid',
+        'Power the fox lift up to the ledge.',
+        rail('Sunlight for the grass · kJ', ['4', '*', '5', '*', '5'], { units: 'kJ' }),
+        { kind: 'foodchain', demo: 25, ratio: 0.2, ledge: 4 },
+        {
+          intro: 'Energy passes up a food chain, but most of it is lost at every step.',
+          enemies: 2,
+          enemyTokens: ['5', '*'],
+          hazard: 'bolts',
+        },
+      ),
+    ],
+  },
+  {
+    id: 'pace',
+    chapter: 2,
+    title: 'Keep pace',
+    subtitle: 'Arrive at exactly the right moment.',
+    kind: 'puzzle',
+    unlock: ['6', '8', '/'],
+    beats: [
+      device(
+        'Right on time',
+        'Send the cart so it arrives as the bar levels.',
+        rail('Cart speed · m/s', ['8', '/', '4'], { units: 'm/s' }),
+        { kind: 'cart', distance: 8, time: 4 },
+        { intro: 'speed = distance ÷ time', enemies: 1, enemyTokens: ['8'], hazard: 'vectors' },
+      ),
+      device(
+        'Late ferry',
+        'Bring the ferry to you as the bar levels. Rightward is positive.',
+        rail('Ferry velocity · m/s', ['0', '-', '1', '/', '2'], { units: 'm/s' }),
+        { kind: 'cart', distance: 3, time: 6, reverse: true },
+        { enemies: 2, enemyTokens: ['6', '/'], hazard: 'vectors' },
+      ),
+    ],
+  },
+  {
+    id: 'watching',
+    chapter: 2,
+    title: 'Something is watching',
+    subtitle: 'A familiar shape. An unfamiliar intention.',
+    kind: 'action',
+    unlock: ['^', '√', '9'],
+    beats: [
+      device(
+        'Bloom',
+        'Grow the colony across the gap. Keep hold of your operators.',
+        rail('Culture time · s', ['2', '*', '4'], { units: 's' }),
+        { kind: 'division', cells: 16, size: 0.5, period: 2 },
+        {
+          enemies: 2,
+          enemyTokens: ['2', '^'],
+          hazard: 'negative',
+          theft: true,
+          intro: 'A power repeats multiplication: 2⁴ = 2 × 2 × 2 × 2.',
+        },
+      ),
+      device(
+        'Bring it down to size',
+        'Reach the top of the wall.',
+        rail('Steps', ['√', '9']),
+        { kind: 'stairs', height: 3, bricks: true },
+        { enemies: 3, enemyTokens: ['9', '√'], hazard: 'negative', theft: true },
+      ),
+    ],
+  },
+  {
+    id: 'first-duel',
+    chapter: 2,
+    title: 'The Unknown',
+    subtitle: '𝑥 has a value of its own.',
+    kind: 'boss',
+    unlock: [],
+    beats: [],
+    phases: [
+      phase(
+        'An unknown value',
+        '𝑥 + 5 = 2',
+        'SUBTRACT',
+        'Find 𝑥. Its value breaks the armour.',
+        rail('𝑥 =', ['2', '-', '5'], { effect: 'solve', substitute: 'x+5', target: 2 }),
+        'negative',
+        2,
+        { intro: 'Whatever you do to one side, do to the other.' },
+      ),
+      phase(
+        'Three of a kind',
+        '3𝑥 − 4 = 8',
+        'DIVIDE',
+        'Find 𝑥. Guard your operators.',
+        rail('𝑥 =', ['8', '/', '2'], { effect: 'solve', substitute: '3*x-4', target: 8 }),
+        'bolts',
+        3,
+        { theft: true },
+      ),
+      phase(
+        'The charge',
+        '𝑥 → ← 1',
+        'CHARGE',
+        'Meet 𝑥 at the trap at the same moment.',
+        rail('Cart speed · m/s', ['6', '/', '2'], { units: 'm/s' }),
+        'charge',
+        2,
+        { device: { kind: 'meet', distance: 6, runnerDistance: 6, runnerSpeed: 3, trapX: 700 } },
+      ),
+    ],
+  },
+  // Chapter III — Balance
+  {
+    id: 'sides',
+    chapter: 3,
+    title: 'Both sides',
+    subtitle: 'A level beam is a bridge.',
+    kind: 'puzzle',
+    unlock: [],
+    beats: [
+      device(
+        'The scale',
+        'Add your mass to the right pan. A level balance is a bridge.',
+        rail('Your mass · kg', ['7', '-', '3'], { units: 'kg' }),
+        {
+          kind: 'lever',
+          pans: true,
+          arms: [3, 3],
+          loads: [
+            { side: -1, arm: 3, mass: 7 },
+            { side: 1, arm: 3, mass: 3 },
+          ],
+          control: 'force',
+          controlArm: 3,
+        },
+        { intro: 'An equal-arm balance compares masses.', enemies: 2, enemyTokens: ['7', '3'] },
+      ),
+      device(
+        'Identical crates',
+        'Both crates hold the same mass. Level the balance.',
+        rail('Each crate · kg', ['6', '/', '2'], { units: 'kg' }),
+        {
+          kind: 'lever',
+          pans: true,
+          arms: [3, 3],
+          loads: [
+            { side: -1, arm: 3, mass: 0, label: '𝑥', count: 2 },
+            { side: -1, arm: 3, mass: 1 },
+            { side: 1, arm: 3, mass: 7 },
+          ],
+          control: 'mass',
+        },
+        { enemies: 2, enemyTokens: ['6', '/'], hazard: 'bolts' },
+      ),
+    ],
+  },
+  {
+    id: 'lever',
+    chapter: 3,
+    title: 'The lever',
+    subtitle: 'Distance is a kind of strength.',
+    kind: 'puzzle',
+    unlock: [],
+    beats: [
+      device(
+        'Where to hang it',
+        'Choose where your 6 N weight hangs.',
+        rail('Hook distance · m', ['8', '-', '4'], { units: 'm' }),
+        { kind: 'lever', arms: [3, 5], loads: [{ side: -1, arm: 3, force: 8 }], control: 'arm', controlForce: 6 },
+        { intro: 'Lever balance: F₁ × L₁ = F₂ × L₂', enemies: 2, enemyTokens: ['8', '4'], hazard: 'bolts' },
+      ),
+      device(
+        'Mass and weight',
+        'This load is marked in kilograms. Level the lever.',
+        rail('Hook weight · N', ['2', '*', '10', '/', '4'], { units: 'N' }),
+        { kind: 'lever', arms: [2, 4], loads: [{ side: -1, arm: 1, mass: 2 }], control: 'force', controlArm: 4 },
+        { intro: 'Weight: G = mg, where g = 10 N/kg.', enemies: 2, enemyTokens: ['10', '*'], hazard: 'bolts' },
+      ),
+      device(
+        'Two loads',
+        'Balance both loads at once.',
+        rail('Hook weight · N', ['10', '/', '5'], { units: 'N' }),
+        {
+          kind: 'lever',
+          arms: [3, 5],
+          loads: [
+            { side: -1, arm: 3, force: 2 },
+            { side: -1, arm: 1, force: 4 },
+          ],
+          control: 'force',
+          controlArm: 5,
+        },
+        { enemies: 3, enemyTokens: ['5', '/', '2'], hazard: 'negative', theft: true },
+      ),
+    ],
+  },
+  {
+    id: 'heavy',
+    chapter: 3,
+    title: 'Heavy company',
+    subtitle: 'They brought weight with them.',
+    kind: 'action',
+    unlock: [],
+    beats: [
+      device(
+        'Under fire',
+        'Level the lever. The operators are out in the field.',
+        rail('Hook weight · N', ['9', '*', '2', '/', '3'], { units: 'N' }),
+        { kind: 'lever', arms: [3, 4], loads: [{ side: -1, arm: 2, force: 9 }], control: 'force', controlArm: 3 },
+        {
+          enemies: 3,
+          enemyTokens: ['2', '9', '3'],
+          hazard: 'bolts',
+          noOperatorRack: true,
+          loose: [
+            ['*', 140, 590],
+            ['/', 880, 590],
+          ],
+        },
+      ),
+      device(
+        'Heavier company',
+        'Three identical crates. Level the balance.',
+        rail('Each crate · kg', ['6', '/', '3'], { units: 'kg' }),
+        {
+          kind: 'lever',
+          pans: true,
+          arms: [3, 3],
+          loads: [
+            { side: -1, arm: 3, mass: 0, label: '𝑥', count: 3 },
+            { side: -1, arm: 3, mass: 2 },
+            { side: 1, arm: 3, mass: 8 },
+          ],
+          control: 'mass',
+        },
+        {
+          enemies: 3,
+          enemyTokens: ['6', '3', '8'],
+          hazard: 'negative',
+          theft: true,
+          noOperatorRack: true,
+          loose: [
+            ['/', 300, 590],
+            ['-', 860, 590],
+          ],
+        },
+      ),
+    ],
+  },
+  // Chapter IV — Line of Sight
+  {
+    id: 'reflection',
+    chapter: 4,
+    title: 'Angles and mirrors',
+    subtitle: 'Light always keeps its angle.',
+    kind: 'puzzle',
+    unlock: [],
+    beats: [
+      device(
+        'Mirror',
+        'Tilt the mirror so the beam goes straight up into the sensor.',
+        rail('Mirror tilt · °', ['9', '*', '5'], { units: '°' }),
+        {
+          kind: 'mirror',
+          laser: [890, 458],
+          beam: 0,
+          mirror: [1270, 458],
+          sensor: [1270, 138],
+          control: 'tilt',
+          bridge: [950, 1540],
+        },
+        {
+          intro: 'Law of reflection: the angle in equals the angle out.',
+          enemies: 2,
+          enemyTokens: ['9', '5'],
+          hazard: 'bolts',
+        },
+      ),
+      device(
+        'Bounce',
+        'Aim the laser at the floor mirror so the beam reaches the sensor.',
+        rail('Laser angle below horizontal · °', ['5', '*', '9'], { units: '°' }),
+        {
+          kind: 'mirror',
+          laser: [1000, 298],
+          beam: 0,
+          mirror: [1320, 618],
+          tilt: 0,
+          sensor: [1640, 298],
+          control: 'aim',
+          bridge: [1500, 1900],
+        },
+        { enemies: 2, enemyTokens: ['5', '*'], hazard: 'vectors' },
+      ),
+      device(
+        'Bank shot',
+        'Tilt the mirror to send the rising beam level into the sensor.',
+        rail('Mirror tilt · °', ['3', '*', '5'], { units: '°' }),
+        {
+          kind: 'mirror',
+          laser: [1000, 578],
+          beam: 30,
+          mirror: [1346.41, 378],
+          sensor: [1720, 378],
+          control: 'tilt',
+          bridge: [1150, 1650],
+        },
+        { enemies: 3, enemyTokens: ['3', '5', '*'], hazard: 'vectors', theft: true },
+      ),
+    ],
+  },
+  {
+    id: 'long-side',
+    chapter: 4,
+    title: 'The long side',
+    subtitle: 'Area remembers length.',
+    kind: 'puzzle',
+    unlock: [],
+    beats: [
+      device(
+        'The long side',
+        'Fill the square on the long side. The plank takes its side length.',
+        rail('Square area · m²', ['3', '^', '2', '+', '4', '^', '2'], { units: 'm²' }),
+        { kind: 'squares', run: 4, rise: 3 },
+        {
+          intro: 'The squares on the two short sides add up to the square on the long side.',
+          enemies: 2,
+          enemyTokens: ['3', '4'],
+          hazard: 'bolts',
+        },
+      ),
+      device(
+        'Raise the ledge',
+        'The plank is 5 m long. Raise the ledge until the plank locks in.',
+        rail('Square on the rising side · m²', ['5', '^', '2', '-', '3', '^', '2'], { units: 'm²' }),
+        { kind: 'squares', run: 3, plank: 5 },
+        { enemies: 3, enemyTokens: ['5', '^', '3'], hazard: 'negative', theft: true },
+      ),
+    ],
+  },
+  {
+    id: 'lens',
+    chapter: 4,
+    title: 'Through the lens',
+    subtitle: 'Light can draw a picture.',
+    kind: 'puzzle',
+    unlock: [],
+    beats: [
+      device(
+        'Same size',
+        'Place the arrow so a sharp image lands on the screen.',
+        rail('Object distance · m', ['2', '*', '2'], { units: 'm' }),
+        { kind: 'lens', mode: 'same', focal: 2 },
+        { intro: 'A convex lens gathers sunlight at its focus.', enemies: 2, enemyTokens: ['2', '*'], hazard: 'bolts' },
+      ),
+      device(
+        'Larger than life',
+        'The lock needs a sharp image taller than the arrow.',
+        rail('Object distance · m', ['3', '/', '2'], { units: 'm' }),
+        { kind: 'lens', mode: 'enlarge', focal: 1, track: 9 },
+        { enemies: 3, enemyTokens: ['3', '/', '2'], hazard: 'vectors', theft: true },
+      ),
+    ],
+  },
+  {
+    id: 'line-duel',
+    chapter: 4,
+    title: 'Line of the Unknown',
+    subtitle: 'The same unknown. A larger world.',
+    kind: 'boss',
+    unlock: [],
+    beats: [],
+    phases: [
+      phase(
+        'A steep approach',
+        '𝑦 = 𝑘𝑥',
+        'SLOPE',
+        'Fire along y = kx through the core.',
+        rail('Slope 𝑘', ['6', '/', '3']),
+        'bolts',
+        3,
+        { device: { kind: 'line', control: 'k', b: 0, core: [3, 6] }, core: gridPoint(3, 6) },
+      ),
+      phase(
+        'Shifted',
+        '𝑦 = 2𝑥 + 𝑏',
+        'INTERCEPT',
+        'Shift the line until it passes through the core.',
+        rail('Intercept 𝑏', ['5', '-', '8']),
+        'vectors',
+        3,
+        { device: { kind: 'line', control: 'b', k: 2, core: [4, 5] }, core: gridPoint(4, 5) },
+      ),
+      phase(
+        'Mirror shield',
+        '𝑦 = −𝑥',
+        'REFLECT',
+        'Turn the mirror square to its beam and send it home.',
+        rail('Mirror tilt · °', ['3', '^', '3', '*', '5'], { units: '°' }),
+        'waves',
+        2,
+        {
+          device: {
+            kind: 'mirror',
+            laser: [898, 282],
+            beam: 225,
+            mirror: [813, 367],
+            sensor: [940, 240],
+            control: 'tilt',
+          },
+        },
+      ),
+    ],
+  },
+  // Chapter V — Waves
+  {
+    id: 'vibration',
+    chapter: 5,
+    title: 'Riding the wave',
+    subtitle: 'Motion has a rhythm.',
+    kind: 'puzzle',
+    unlock: [],
+    beats: [
+      device(
+        'Frequency',
+        'Count the far platforms. Make the near ones vibrate in step.',
+        rail('Frequency · Hz', ['6', '/', '4'], { units: 'Hz' }),
+        { kind: 'wave', mode: 'frequency', ledge: 1, frequency: 0, cycles: 6, seconds: 4 },
+        { intro: '1 Hz is one vibration per second.', enemies: 2, enemyTokens: ['6', '4'], hazard: 'waves' },
+      ),
+      device(
+        'Louder',
+        'Match the sound lock’s waveform.',
+        rail('Amplitude · divisions', ['9', '/', '3']),
+        { kind: 'scope', mode: 'amplitude', amplitude: 3, frequency: 300 },
+        { intro: 'A larger amplitude is a louder sound.', enemies: 2, enemyTokens: ['9', '/'], hazard: 'bolts' },
+      ),
+      device(
+        'Higher',
+        'Match the sound lock’s pitch.',
+        rail('Frequency · Hz', ['4', '*', '10', '*', '10'], { units: 'Hz' }),
+        { kind: 'scope', mode: 'frequency', amplitude: 2, frequency: 400 },
+        {
+          intro: 'A higher frequency is a higher pitch.',
+          enemies: 3,
+          enemyTokens: ['4', '10', '*'],
+          hazard: 'waves',
+          theft: true,
+        },
+      ),
+    ],
+  },
+  {
+    id: 'heartbeat',
+    chapter: 5,
+    title: 'Heartbeat',
+    subtitle: 'The oldest rhythm there is.',
+    kind: 'puzzle',
+    unlock: [],
+    beats: [
+      device(
+        'Pacemaker',
+        'Set the pacemaker to beat in step with the heart.',
+        rail('Pacemaker · beats/min', ['8', '*', '9']),
+        { kind: 'pulse', bpm: 72, window: 15 },
+        { enemies: 3, enemyTokens: ['9', '8', '*'], hazard: 'waves' },
+      ),
+    ],
+  },
+  {
+    id: 'rope',
+    chapter: 5,
+    title: 'The rope',
+    subtitle: 'A wave carries its shape along.',
+    kind: 'puzzle',
+    unlock: [],
+    beats: [
+      device(
+        'Wavelength',
+        'Measure the rope’s wave speed. Shake it so every stone rises together.',
+        rail('Frequency · Hz', ['8', '/', '4'], { units: 'Hz' }),
+        { kind: 'rope', distance: 8, seconds: 2, spacing: 2 },
+        { intro: 'wave speed = wavelength × frequency', enemies: 2, enemyTokens: ['8', '4'], hazard: 'vectors' },
+      ),
+    ],
+  },
+  {
+    id: 'loud',
+    chapter: 5,
+    title: 'Loud and clear',
+    subtitle: 'Some things only open for the right note.',
+    kind: 'action',
+    unlock: [],
+    beats: [
+      device(
+        'Rising tide',
+        'Ride the platforms up to the ledge.',
+        rail('Amplitude · m', ['9', '/', '3'], { units: 'm' }),
+        { kind: 'wave', mode: 'amplitude', ledge: 3, frequency: 0.4 },
+        { enemies: 3, enemyTokens: ['9', '3', '/'], hazard: 'waves' },
+      ),
+      device(
+        'Under pressure',
+        'Open the sound gate. 𝑥 wants your operators.',
+        rail('Frequency · Hz', ['3', '*', '10', '*', '10'], { units: 'Hz' }),
+        { kind: 'scope', mode: 'frequency', amplitude: 3, frequency: 300 },
+        {
+          enemies: 3,
+          enemyTokens: ['10', '3', '10'],
+          hazard: 'vectors',
+          theft: true,
+          noOperatorRack: true,
+          loose: [
+            ['*', 200, 590],
+            ['*', 760, 590],
+          ],
+        },
+      ),
+    ],
+  },
+  // Chapter VI — The Unknown
+  {
+    id: 'unknown',
+    chapter: 6,
+    title: 'Find 𝑥',
+    subtitle: 'One last expression.',
+    kind: 'boss',
+    unlock: [],
+    beats: [],
+    phases: [
+      phase(
+        'The colony',
+        '𝑥² − 2𝑥 + 1 + [2ⁿ] + FL + s/t + θ + f',
+        'MULTIPLY',
+        'Split your counter into one shard for every shield cell.',
+        rail('Divisions', ['2', '*', '2']),
+        'negative',
+        2,
+        { device: { kind: 'division', cells: 16, size: 0.5 }, theft: true },
+      ),
+      phase(
+        'The heavy term',
+        '𝑥² − 2𝑥 + 1 + [FL] + s/t + θ + f',
+        'CRUSH',
+        'Level the lever against its heavy term.',
+        rail('Hook weight · N', ['8', '*', '3', '/', '4'], { units: 'N' }),
+        'bolts',
+        2,
+        {
+          device: {
+            kind: 'lever',
+            arms: [3, 4],
+            loads: [{ side: -1, arm: 3, force: 8 }],
+            control: 'force',
+            controlArm: 4,
+            pivotX: 960,
+            pivotY: 330,
+          },
+          core: [1000, 170],
+        },
+      ),
+      phase(
+        'The racing term',
+        '𝑥² − 2𝑥 + 1 + [s/t] + θ + f',
+        'CHARGE',
+        'Meet it at the trap at the same moment.',
+        rail('Cart speed · m/s', ['7', '/', '2'], { units: 'm/s' }),
+        'charge',
+        2,
+        { device: { kind: 'meet', distance: 7, runnerDistance: 4, runnerSpeed: 2, trapX: 700 } },
+      ),
+      phase(
+        'The light shield',
+        '𝑥² − 2𝑥 + 1 + [θ] + f',
+        'BLIND',
+        'Bounce your beam off the mirror into its core.',
+        rail('Mirror tilt · °', ['5', '*', '4', '+', '10'], { units: '°' }),
+        'waves',
+        2,
+        {
+          device: {
+            kind: 'mirror',
+            laser: [340, 600],
+            beam: 50,
+            mirror: [533, 370],
+            sensor: [878, 309],
+            control: 'tilt',
+          },
+          core: [878, 309],
+        },
+      ),
+      phase(
+        'Frequency armour',
+        '𝑥² − 2𝑥 + 1 + [f]',
+        'OSCILLATE',
+        'Match its armour’s pitch.',
+        rail('Frequency · Hz', ['5', '*', '10', '*', '10'], { units: 'Hz' }),
+        'vectors',
+        2,
+        { device: { kind: 'scope', mode: 'frequency', amplitude: 3, frequency: 500 }, theft: true },
+      ),
+      phase(
+        'Find 𝑥',
+        '𝑥² − 2𝑥 + 1 = 0',
+        'UNKNOWN',
+        'Which value of 𝑥 makes it zero?',
+        rail('𝑥 =', ['1'], { effect: 'solve', substitute: 'x^2-2*x+1', target: 0 }),
+        'vectors',
+        1,
+        { intro: 'One last expression.' },
+      ),
+    ],
+  },
+];
+
+export function unlockedThrough(encounter: number, beatIndex = 0): string[] {
+  const tokens = new Set<string>();
+  for (let i = 0; i <= encounter; i++) {
+    const entry = CAMPAIGN[i];
+    entry.unlock.forEach((t) => tokens.add(t));
+    const steps = entry.phases ?? entry.beats;
+    steps.slice(0, i === encounter ? beatIndex + 1 : undefined).forEach((b) => b.unlock?.forEach((t) => tokens.add(t)));
+  }
+  return [...tokens];
+}
