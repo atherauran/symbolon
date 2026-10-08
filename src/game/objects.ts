@@ -15,6 +15,7 @@ export class Token {
   hit = new Set<object>();
   /** Authored and stolen tokens return here instead of disappearing. */
   home?: [number, number];
+  ground?: Phaser.Physics.Arcade.Collider;
   constructor(
     public scene: Phaser.Scene,
     public source: string,
@@ -56,6 +57,7 @@ export class Token {
     }
   }
   destroy(): void {
+    this.ground?.destroy();
     this.visual.destroy();
     this.collider.destroy();
   }

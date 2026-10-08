@@ -177,7 +177,6 @@ export interface Beat {
   enemyTokens?: string[];
   hazard?: Hazard;
   intro?: string;
-  unlock?: string[];
   /** Tokens placed in the world instead of on a rack, as [token, x, y]. */
   loose?: [string, number, number][];
   /** The Unknown knocks carried operators out of the rail. */
@@ -193,23 +192,16 @@ export interface BossPhase extends Beat {
   hits: number;
   core?: [number, number];
 }
-export interface Encounter {
-  id: string;
-  chapter: number;
-  title: string;
-  subtitle: string;
-  kind: 'puzzle' | 'action' | 'boss';
-  unlock: string[];
-  beats: Beat[];
-  phases?: BossPhase[];
-}
+/** A checkpoint is a zone; boss phases are zones too. */
 export interface CheckpointState {
-  version: 3;
+  version: 4;
   character: CharacterId;
-  encounter: number;
-  beat: number;
+  region: number;
+  zone: number;
+  /** The furthest region reached, for chapter replay. */
   furthest: number;
-  unlocked: string[];
+  /** Numbers, operators and laws learned by solving rails. */
+  known: string[];
   complete: boolean;
   elapsed: number;
 }

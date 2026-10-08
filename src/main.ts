@@ -3,9 +3,9 @@ import '@fontsource/stix-two-math';
 import '@fontsource-variable/manrope';
 import './style.css';
 import { Backdrop } from './game/Backdrop';
-import { Gameplay } from './game/Gameplay';
+import { World } from './game/World';
 import { AudioEngine } from './game/audio';
-import { CAMPAIGN, CHAPTERS, unlockedThrough } from './content/campaign';
+import { REGIONS, knownBefore } from './content/campaign';
 import { CHARACTERS, type CharacterId, type CheckpointState, type GameEvent, type Settings } from './game/types';
 
 const root = document.querySelector<HTMLDivElement>('#interface')!;
@@ -18,10 +18,26 @@ function read<T>(key: string): T | null {
     return null;
   }
 }
-let saved = read<CheckpointState>(SAVE_KEY);
+/** Version 3 saved an encounter index; each now resumes at the start of its chapter's region. */
+const V3_CHAPTERS = [1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6];
+function migrate(save: CheckpointState | { version: 3; encounter: number; furthest: number } | null) {
+  if (save?.version !== 3) return save;
+  const region = V3_CHAPTERS[save.encounter] - 1;
+  return {
+    ...(save as unknown as CheckpointState),
+    version: 4,
+    region,
+    zone: 0,
+    furthest: V3_CHAPTERS[save.furthest] - 1,
+    known: knownBefore(region, 0),
+  } as CheckpointState;
+}
+let saved = migrate(read(SAVE_KEY));
 if (
   saved &&
-  (saved.version !== 3 || saved.encounter >= CAMPAIGN.length || !CHARACTERS.some((c) => c.id === saved!.character))
+  (saved.version !== 4 ||
+    !REGIONS[saved.region]?.zones[saved.zone] ||
+    !CHARACTERS.some((c) => c.id === saved!.character))
 )
   saved = null;
 let settings: Settings = { sound: true, reducedMotion: false, volume: 0.55, ...read<Settings>(SETTINGS_KEY) };
@@ -52,7 +68,7 @@ const game = new Phaser.Game({
     default: 'arcade',
     arcade: { gravity: { x: 0, y: 0 }, debug: false, fixedStep: false, customUpdate: true },
   },
-  scene: [Backdrop, Gameplay],
+  scene: [Backdrop, World],
   render: { transparent: false, powerPreference: 'high-performance' },
 });
 
@@ -69,7 +85,7 @@ function soundButton(): string {
 function title(): void {
   screen = 'title';
   clearTimeout(toastTimer);
-  game.scene.stop('Gameplay');
+  game.scene.stop('World');
   game.scene.wake('Backdrop');
   root.innerHTML = `<div class="title-screen">
     <header>${brand()}<nav><button class="text-button" data-action="controls">HOW TO PLAY <span>↗</span></button>${soundButton()}<button class="icon-button" data-action="fullscreen" aria-label="Toggle fullscreen">⛶</button></nav></header>
@@ -79,7 +95,7 @@ function title(): void {
       <div class="title-actions"><button class="primary" data-action="${saved && !saved.complete ? 'continue' : 'choose'}">${saved && !saved.complete ? 'Continue your journey' : 'Enter the equation'}<span>↗</span></button>${saved && !saved.complete ? '<button class="secondary" data-action="choose">New journey</button>' : ''}</div>
       <div class="game-meta"><span>SINGLE PLAYER</span><i></i><span>SIX CHAPTERS</span><i></i><span>KEYBOARD + MOUSE</span></div>
     </main>
-    <footer class="chapter-strip">${CHAPTERS.map((chapter, i) => `<button class="chapter-link ${i === 0 ? 'available' : ''}" data-action="chapters"><span class="chapter-number">0${i + 1}</span><span>${chapter.title}</span><span class="chapter-symbol">${chapter.symbol}</span></button>`).join('')}</footer>
+    <footer class="chapter-strip">${REGIONS.map((chapter, i) => `<button class="chapter-link ${i === 0 ? 'available' : ''}" data-action="chapters"><span class="chapter-number">0${i + 1}</span><span>${chapter.title}</span><span class="chapter-symbol">${chapter.symbol}</span></button>`).join('')}</footer>
   </div>`;
 }
 function choose(): void {
@@ -90,14 +106,14 @@ function choose(): void {
       <div class="selection-bottom"><span>Same journey. Your own approach.</span><button class="primary" data-action="start">Let’s begin<span>→</span></button></div>
     </main></div>`;
 }
-function newSave(encounter = 0): CheckpointState {
+function newSave(region = 0): CheckpointState {
   return {
-    version: 3,
+    version: 4,
     character: selected,
-    encounter,
-    beat: 0,
+    region,
+    zone: 0,
     furthest: saved?.furthest ?? 0,
-    unlocked: unlockedThrough(encounter),
+    known: knownBefore(region, 0),
     complete: false,
     elapsed: 0,
   };
@@ -107,11 +123,8 @@ function launch(save: CheckpointState): void {
   saved = { ...save };
   persist(SAVE_KEY, saved);
   showHud();
-  const startsChapter =
-    save.beat === 0 &&
-    (save.encounter === 0 || CAMPAIGN[save.encounter - 1].chapter !== CAMPAIGN[save.encounter].chapter);
   game.scene.sleep('Backdrop');
-  game.scene.start('Gameplay', { save: saved, settings, audio, emit: onEvent, chapterCard: startsChapter });
+  game.scene.start('World', { save: saved, settings, audio, emit: onEvent, chapterCard: save.zone === 0 });
 }
 function showHud(): void {
   screen = 'playing';
@@ -125,7 +138,7 @@ function renderHud(event: Extract<GameEvent, { type: 'hud' }>): void {
     const el = document.getElementById(id);
     if (el) el.textContent = value;
   };
-  set('hud-chapter', `CHAPTER ${CHAPTERS[event.chapter - 1].numeral}`);
+  set('hud-chapter', `CHAPTER ${REGIONS[event.chapter - 1].numeral}`);
   set('hud-title', event.title);
   set('hud-phase', event.phase);
   set('objective-text', event.objective);
@@ -163,8 +176,8 @@ function onEvent(event: GameEvent): void {
   } else if (event.type === 'chapter') {
     const card = document.getElementById('chapter-card');
     if (!card) return;
-    game.scene.pause('Gameplay');
-    card.innerHTML = `<span>CHAPTER ${CHAPTERS[event.chapter - 1].numeral}</span><strong>${event.title}</strong><p>${event.knowledge}</p><button class="primary" data-action="begin-chapter">Begin<span>→</span></button>`;
+    game.scene.pause('World');
+    card.innerHTML = `<span>CHAPTER ${REGIONS[event.chapter - 1].numeral}</span><strong>${event.title}</strong><p>${event.knowledge}</p><button class="primary" data-action="begin-chapter">Begin<span>→</span></button>`;
     card.classList.add('visible');
   } else if (event.type === 'pause') pause();
   else if (event.type === 'death') death();
@@ -172,14 +185,14 @@ function onEvent(event: GameEvent): void {
 }
 function pause(): void {
   screen = 'paused';
-  game.scene.pause('Gameplay');
+  game.scene.pause('World');
   document.getElementById('modal-host')!.innerHTML =
     `<div class="modal-scrim"><section class="pause-panel"><div class="eyebrow">TAKE A MOMENT</div><h2>Between<br><em>possibilities.</em></h2><p>Your progress is saved.</p><button class="primary" data-action="resume">Keep going<span>→</span></button><button class="menu-row" data-action="restart">Restart this checkpoint <span>↺</span></button><button class="menu-row" data-action="controls">Controls <span>↗</span></button><button class="menu-row" data-action="motion">Camera motion <span>${settings.reducedMotion ? 'REDUCED' : 'FULL'}</span></button><button class="menu-row" data-action="sound">Sound <span>${settings.sound ? 'ON' : 'OFF'}</span></button><button class="menu-row" data-action="title">Return to title <span>↗</span></button></section></div>`;
 }
 function resume(): void {
   screen = 'playing';
   document.getElementById('modal-host')!.innerHTML = '';
-  (game.scene.getScene('Gameplay') as Gameplay).resumeFromMenu();
+  (game.scene.getScene('World') as World).resumeFromMenu();
 }
 function death(): void {
   screen = 'dead';
@@ -209,16 +222,15 @@ function controls(): void {
 }
 function chapters(): void {
   screen = 'chapters';
-  const entries = CHAPTERS.map((chapter, i) => {
-    const index = CAMPAIGN.findIndex((e) => e.chapter === i + 1);
-    const unlocked = index <= (saved?.furthest ?? 0);
-    return `<button class="chapter-entry" data-replay="${index}" ${unlocked ? '' : 'disabled'}><span class="chapter-number">${chapter.numeral}</span><span><strong>${chapter.title}</strong><small>${chapter.subtitle}</small></span><span class="chapter-entry-symbol">${unlocked ? '↗' : '·'}</span></button>`;
+  const entries = REGIONS.map((chapter, i) => {
+    const unlocked = i <= (saved?.furthest ?? 0);
+    return `<button class="chapter-entry" data-replay="${i}" ${unlocked ? '' : 'disabled'}><span class="chapter-number">${chapter.numeral}</span><span><strong>${chapter.title}</strong><small>${chapter.subtitle}</small></span><span class="chapter-entry-symbol">${unlocked ? '↗' : '·'}</span></button>`;
   }).join('');
   root.innerHTML = `<div class="selection-screen"><header>${brand()}<button class="text-button" data-action="title">← BACK</button></header><main class="chapter-menu"><div class="eyebrow">FROM ONE TO INFINITY</div><h2>A world<br><em>of possibilities.</em></h2><div class="chapter-list">${entries}</div><p class="muted">Chapters unlock as you move forward. Replay starts at the beginning of a chapter.</p></main></div>`;
 }
 function ending(elapsed: number): void {
   screen = 'ending';
-  game.scene.pause('Gameplay');
+  game.scene.pause('World');
   root.innerHTML = `<div class="ending-screen"><div class="eyebrow">EVERY END IS A BEGINNING</div><div class="ending-formula">(𝑥 − 1)² = 0</div><h2>You found<br><em>the unknown.</em></h2><p>It began with one. It was one all along.</p><div class="ending-stats"><span>6 CHAPTERS</span><span>${Math.floor(elapsed / 60)} MINUTES</span><span>𝑥 = 1</span></div><button class="primary" data-action="chapters">Find another possibility<span>↗</span></button><button class="text-button" data-action="title">RETURN TO TITLE</button><div class="credits">Inspired by Alan Becker’s <em>Animation vs. Math</em><br>An independent fan game · Original procedural art and sound<br>Mathematics belongs to everyone.</div></div>`;
 }
 
@@ -242,14 +254,14 @@ root.addEventListener('click', (event) => {
   else if (action === 'continue' && saved) launch(saved);
   else if (action === 'begin-chapter') {
     document.getElementById('chapter-card')?.classList.remove('visible');
-    game.scene.resume('Gameplay');
+    game.scene.resume('World');
   } else if (action === 'chapters') chapters();
   else if (action === 'pause') pause();
   else if (action === 'resume') resume();
   else if (action === 'restart') {
     showHud();
-    game.scene.resume('Gameplay');
-    (game.scene.getScene('Gameplay') as Gameplay).restartCheckpoint();
+    game.scene.resume('World');
+    (game.scene.getScene('World') as World).restartCheckpoint();
   } else if (action === 'controls') controls();
   else if (action === 'fullscreen') {
     if (document.fullscreenElement) void document.exitFullscreen();
@@ -267,8 +279,8 @@ root.addEventListener('click', (event) => {
 window.addEventListener('keydown', (event) => {
   if (event.code === 'KeyR' && screen === 'dead') {
     showHud();
-    game.scene.resume('Gameplay');
-    (game.scene.getScene('Gameplay') as Gameplay).restartCheckpoint();
+    game.scene.resume('World');
+    (game.scene.getScene('World') as World).restartCheckpoint();
   }
   if (event.code === 'Escape' && screen === 'paused') resume();
 });

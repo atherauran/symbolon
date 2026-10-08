@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
-import { CAMPAIGN, CHAPTERS, unlockedThrough } from '../content/campaign';
+import { ALL_ZONES, REGIONS, ZONE_COUNT, zoneOrder, type Zone } from '../content/campaign';
 import { isOperator, notation, OPERATORS } from '../math/evaluate';
-import { judge } from '../physics/model';
+import { GY, judge } from '../physics/model';
 import { AudioEngine } from './audio';
 import { Dust, Formula, INK, MUTED, StickFigure, text } from './art';
 import { createDevice, HAZARD, type Device, type DeviceHost, type Platform, type Ramp } from './devices';
@@ -12,7 +12,6 @@ import {
   type BossPhase,
   type Character,
   type CheckpointState,
-  type Encounter,
   type GameEvent,
   type Settings,
 } from './types';
@@ -33,6 +32,7 @@ interface Enemy {
   stun: number;
   kind: 'cluster' | 'operator';
   token: string;
+  colliders: Phaser.Physics.Arcade.Collider[];
 }
 interface Bolt {
   x: number;
@@ -65,40 +65,82 @@ interface Pulse {
   trail: Phaser.Math.Vector2[];
   boss: boolean;
 }
+/** A zone built in the world: its rail, racks, device and gate. Its device draws in the zone's own coordinates. */
+interface LiveZone {
+  zone: Zone;
+  region: number;
+  index: number;
+  ox: number;
+  /** Everything the device creates, positioned at the zone's origin. */
+  layer: Phaser.GameObjects.Container;
+  sketch: Phaser.GameObjects.Graphics;
+  platforms: Platform[];
+  ramps: Ramp[];
+  rail: Rail;
+  racks: Rack[];
+  device?: Device;
+  /** The wall at the zone's right edge; it slides up once the zone is solved. */
+  gate: Platform;
+  bridge?: Platform;
+  core: { x: number; y: number };
+  boss?: { formula: Formula; label: Phaser.GameObjects.Text };
+  solved: boolean;
+  deviceHandled: boolean;
+}
 
-export class Gameplay extends Phaser.Scene {
+/** Start-ground layout inside a zone, in zone coordinates. */
+const RAIL_X = 655,
+  RAIL_Y = 536,
+  GATE_TOP = -420;
+
+/**
+ * A view of the scene whose factory puts every new game object into `layer`. Devices keep their own coordinates
+ * and the layer places them in the world.
+ */
+function layered(scene: Phaser.Scene, layer: Phaser.GameObjects.Container): Phaser.Scene {
+  const add = new Proxy(scene.add, {
+    get(factory, key) {
+      const value = Reflect.get(factory, key);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        const made = value.apply(factory, args);
+        if (made instanceof Phaser.GameObjects.GameObject && !made.parentContainer) layer.add(made);
+        return made;
+      };
+    },
+  });
+  return new Proxy(scene, { get: (target, key) => (key === 'add' ? add : Reflect.get(target, key)) });
+}
+
+export class World extends Phaser.Scene {
   args!: RuntimeArgs;
   save!: CheckpointState;
   character!: Character;
-  encounter!: Encounter;
-  beat!: Beat;
-  phase?: BossPhase;
+  known = new Set<string>();
+  zones: LiveZone[] = [];
+  cur!: LiveZone;
   player!: Phaser.GameObjects.Rectangle;
   playerBody!: Phaser.Physics.Arcade.Body;
   keys!: Record<string, Phaser.Input.Keyboard.Key>;
+  ground!: Phaser.Physics.Arcade.StaticGroup;
   platforms: Platform[] = [];
+  private byRect = new Map<Phaser.GameObjects.GameObject, Platform>();
   tokens: Token[] = [];
-  racks: Rack[] = [];
   enemies: Enemy[] = [];
   bolts: Bolt[] = [];
   warnings: Warning[] = [];
   pulses: Pulse[] = [];
-  ramps: Ramp[] = [];
-  rail!: Rail;
-  device?: Device;
   held: Token | null = null;
-  background!: Phaser.GameObjects.Graphics;
+  grid!: Phaser.GameObjects.TileSprite;
   geometry!: Phaser.GameObjects.Graphics;
   figures!: Phaser.GameObjects.Graphics;
   figure!: StickFigure;
   overlay!: Phaser.GameObjects.Graphics;
   dust!: Dust;
   hint!: Phaser.GameObjects.Text;
-  bossFormula?: Formula;
-  bossLabel?: Phaser.GameObjects.Text;
   cameo?: Formula;
-  portal!: Phaser.GameObjects.Container;
-  core = { x: 940, y: 240 };
+  barrier!: Platform;
+  leftBound = 0;
   clock = 0;
   worldClock = 0;
   hp = 4;
@@ -111,7 +153,6 @@ export class Gameplay extends Phaser.Scene {
   vy = 0;
   vx = 0;
   facing = 1;
-  solved = false;
   dying = false;
   transition = false;
   attackTimer = 4;
@@ -119,16 +160,12 @@ export class Gameplay extends Phaser.Scene {
   editTimer = 0;
   hitCount = 0;
   bossStun = 0;
-  worldWidth = 2300;
-  goalX = 2160;
   effectMagnitude = 0;
   counterLock = 0;
   meleeQueue = false;
   standing?: Platform;
   private introSafe = 0;
   private pauseDebounce = 0;
-  private builtPlatforms: Platform[] = [];
-  private deviceHandled = false;
   private onRamp = false;
   private theftWarned = false;
   private reinforceTimer = 0;
@@ -136,33 +173,42 @@ export class Gameplay extends Phaser.Scene {
   private spawned = 0;
 
   constructor() {
-    super('Gameplay');
+    super('World');
   }
   init(args: RuntimeArgs): void {
     this.args = args;
-    this.save = { ...args.save, unlocked: [...args.save.unlocked] };
+    this.save = { ...args.save, known: [...args.save.known] };
   }
+  get beat(): Beat {
+    return this.cur.zone.beat;
+  }
+  get phase(): BossPhase | undefined {
+    return this.cur.zone.duel ? (this.cur.zone.beat as BossPhase) : undefined;
+  }
+  get rail(): Rail {
+    return this.cur.rail;
+  }
+  get device(): Device | undefined {
+    return this.cur.device;
+  }
+  get chapter(): number {
+    return this.cur.region + 1;
+  }
+
   create(): void {
     this.character = CHARACTERS.find((c) => c.id === this.save.character)!;
-    this.encounter = CAMPAIGN[this.save.encounter];
-    this.phase = this.encounter.phases?.[this.save.beat];
-    this.beat = this.phase ?? this.encounter.beats[this.save.beat];
+    this.known = new Set(this.save.known);
+    this.zones = [];
     this.platforms = [];
+    this.byRect.clear();
     this.tokens = [];
-    this.racks = [];
     this.enemies = [];
     this.bolts = [];
     this.warnings = [];
     this.pulses = [];
-    this.ramps = [];
     this.held = null;
-    this.standing = undefined;
-    this.bossFormula = undefined;
-    this.bossLabel = undefined;
-    this.cameo = undefined;
-    this.device = undefined;
-    this.builtPlatforms = [];
-    this.deviceHandled = this.onRamp = this.theftWarned = false;
+    this.standing = this.cameo = undefined;
+    this.onRamp = this.theftWarned = false;
     this.clock =
       this.worldClock =
       this.attack =
@@ -172,43 +218,46 @@ export class Gameplay extends Phaser.Scene {
       this.jumpBuffer =
       this.vy =
       this.vx =
-      this.hitCount =
       this.hudTimer =
       this.editTimer =
       this.effectMagnitude =
-      this.counterLock =
-      this.bossStun =
-      this.spawned =
       this.launchVy =
+      this.spawned =
         0;
     this.facing = 1;
     this.hp = 4;
     this.focus = this.character.focus;
     this.pauseDebounce = 0.25;
-    this.reinforceTimer = 8;
-    this.solved = this.dying = this.transition = this.meleeQueue = false;
-    this.core = this.phase?.core ? { x: this.phase.core[0], y: this.phase.core[1] } : { x: 940, y: 240 };
-    this.attackTimer = this.phase ? 4.5 : 6;
-    this.introSafe = this.beat.unlock?.length ? 9 : 3;
-    this.worldWidth = this.phase ? 1280 : 2300;
-    this.goalX = this.worldWidth - 145;
-    this.save.unlocked = unlockedThrough(this.save.encounter, this.save.beat);
-    this.physics.world.setBounds(0, -400, this.worldWidth, 1600);
-    this.cameras.main.setBounds(0, -70, this.worldWidth, 820).setBackgroundColor('#090b0d');
-    this.background = this.add.graphics().setDepth(-10);
+    this.dying = this.transition = this.meleeQueue = false;
+    this.physics.world.setBounds(-1000, -800, 1e6, 2000);
+    this.ground = this.physics.add.staticGroup();
+    this.grid = this.add.tileSprite(0, 0, 1280, 720, this.gridTexture()).setOrigin(0).setScrollFactor(0).setDepth(-10);
     this.geometry = this.add.graphics().setDepth(1);
     this.figures = this.add.graphics().setDepth(15);
     this.figure = new StickFigure();
     this.overlay = this.add.graphics().setDepth(20);
     this.dust = new Dust(this.add.graphics().setDepth(30));
-    this.drawBackdrop();
-    this.buildArena();
-    this.player = this.add.rectangle(100, 563, 24, 62, 0xffffff, 0).setDepth(10);
+
+    const start = ALL_ZONES[zoneOrder(this.save.region, this.save.zone)];
+    this.cur = this.buildZone(start.region, start.index);
+    this.leftBound = this.cur.ox;
+    this.barrier = this.addPlatform(this.cur.ox - 10, GY - 520, 20, 1400, true);
+    this.loadAhead();
+
+    this.player = this.add.rectangle(this.cur.ox + 100, 563, 24, 62, 0xffffff, 0).setDepth(10);
     this.physics.add.existing(this.player);
     this.playerBody = this.player.body as Phaser.Physics.Arcade.Body;
     this.playerBody.setMaxVelocity(1800, 3200);
-    for (const platform of this.platforms) this.collidePlayer(platform);
-    if (!this.phase) this.cameras.main.startFollow(this.player, false, 0.09, 0.09, -190, 50);
+    this.physics.add.collider(this.player, this.ground, (_player, rect) => {
+      const p = this.byRect.get(rect as Phaser.GameObjects.GameObject);
+      if (p && this.playerBody.blocked.down && Math.abs(this.playerBody.bottom - p.body.top) < 8) this.standing = p;
+    });
+    const camera = this.cameras.main.setBackgroundColor('#090b0d');
+    camera.startFollow(this.player, false, 0.09, 0.09, -190, 50);
+    this.updateCamera(0);
+    camera.centerOn(this.player.x + 190, 360 - 50);
+    this.updateCamera(0);
+
     this.keys = this.input.keyboard!.addKeys('A,D,LEFT,RIGHT,SPACE,E,F,R,ESC,Q') as Record<
       string,
       Phaser.Input.Keyboard.Key
@@ -221,25 +270,11 @@ export class Gameplay extends Phaser.Scene {
       this.cycleRack(dy > 0 ? 1 : -1),
     );
     this.hint = text(this, 640, 663, '', 12, '#c4ccd0', false).setScrollFactor(0).setDepth(60);
-    if (this.phase) this.buildBoss();
-    else
-      for (let i = 0; i < (this.beat.enemies ?? 0); i++)
-        this.spawnEnemy(this.beat.layout === 'device' ? 330 + i * 190 : 790 + i * 330, 570);
-    if (!this.phase && this.beat.hazard && this.encounter.chapter >= 2)
-      this.cameo = new Formula(this, 1030, 230, '𝑥', 56, '#aab1b5').setDepth(4);
     if (!this.args.settings.reducedMotion) {
-      this.cameras.main.setZoom(this.phase ? 0.94 : 1.04);
-      this.tweens.add({ targets: this.cameras.main, zoom: 1, duration: 1900, ease: 'Sine.easeInOut' });
+      camera.setZoom(this.phase ? 0.94 : 1.04);
+      this.tweens.add({ targets: camera, zoom: 1, duration: 1900, ease: 'Sine.easeInOut' });
     }
-    if (this.args.chapterCard) {
-      const chapter = CHAPTERS[this.encounter.chapter - 1];
-      this.args.emit({
-        type: 'chapter',
-        chapter: this.encounter.chapter,
-        title: chapter.title,
-        knowledge: chapter.knowledge,
-      });
-    } else this.args.emit({ type: 'toast', text: this.beat.name, sub: this.beat.intro ?? this.beat.objective });
+    this.activate(this.args.chapterCard ?? false);
     this.commitSave();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.removeAllListeners();
@@ -247,27 +282,65 @@ export class Gameplay extends Phaser.Scene {
     this.updateHud();
   }
 
-  private buildArena(): void {
-    if (this.phase) {
-      this.platform(640, 628, 1280, 20);
-      this.platform(180, 433, 150, 10);
-      this.platform(1080, 447, 170, 10);
+  private gridTexture(): string {
+    if (!this.textures.exists('grid'))
+      this.make
+        .graphics({}, false)
+        .lineStyle(1, 0x66717b, 0.04)
+        .lineBetween(0.5, 0, 0.5, 80)
+        .lineBetween(0, 0.5, 80, 0.5)
+        .generateTexture('grid', 80, 80)
+        .destroy();
+    return 'grid';
+  }
+
+  // ---------- Zones ----------
+
+  private buildZone(region: number, index: number): LiveZone {
+    const zone = REGIONS[region].zones[index],
+      ox = zone.x[0],
+      beat = zone.beat;
+    const layer = this.add.container(ox, 0).setDepth(2);
+    const sketch = this.add.graphics();
+    layer.add(sketch);
+    const phase = zone.duel ? (beat as BossPhase) : undefined;
+    const live: LiveZone = {
+      zone,
+      region,
+      index,
+      ox,
+      layer,
+      sketch,
+      platforms: [],
+      ramps: [],
+      racks: [],
+      rail: new Rail(this, ox + (zone.duel ? 650 : RAIL_X), RAIL_Y, beat.rail, this.character.color),
+      gate: undefined!,
+      core: phase?.core ? { x: phase.core[0], y: phase.core[1] } : { x: 940, y: 240 },
+      solved: false,
+      deviceHandled: false,
+    };
+    const local = layered(this, layer);
+    if (zone.duel) {
+      this.zonePlatform(live, 640, GY + 10, 1280, 20);
+      this.zonePlatform(live, 180, 433, 150, 10);
+      this.zonePlatform(live, 1080, 447, 170, 10);
     } else {
-      this.platform(475, 628, 950, 20);
-      if (this.beat.layout === 'gap') this.platform(1920, 628, 760, 20);
+      this.zonePlatform(live, 475, GY + 10, 950, 20);
+      if (beat.layout === 'gap') this.zonePlatform(live, 1920, GY + 10, 760, 20);
     }
-    this.rail = new Rail(this, this.phase ? 650 : 655, 536, this.beat.rail, this.character.color);
-    this.makeRacks();
-    if (this.beat.device) {
-      this.device = createDevice(this.deviceHost(), this.beat.device);
-      this.device.build();
+    live.gate = this.zonePlatform(live, zone.x[1] - ox, (GATE_TOP + GY) / 2, 30, GY - GATE_TOP, true);
+    if (beat.device) {
+      live.device = createDevice(this.hostFor(live, local), beat.device);
+      live.device.build();
     }
-    if (this.save.encounter === 0 && this.save.beat === 0) {
-      this.racks.forEach((r) => r.container.setVisible(false));
-      const one = this.spawnToken('1', 330, 475);
+    this.makeRacks(live);
+    const first = region === 0 && index === 0;
+    if (first) {
+      const one = this.spawnToken('1', ox + 330, 475);
       one.body.setGravityY(0);
       one.body.setVelocityY(-8);
-      one.home = [330, 470];
+      one.home = [ox + 330, 470];
       this.tweens.add({
         targets: one.collider,
         y: 460,
@@ -277,87 +350,192 @@ export class Gameplay extends Phaser.Scene {
         ease: 'Sine.easeInOut',
       });
     }
-    for (const [source, x, y] of this.beat.loose ?? []) this.spawnToken(source, x, y).home = [x, y];
-    const exitY = this.device ? this.device.goal.y : 628;
-    if (this.device) this.goalX = this.device.goal.x;
-    const g = this.add.graphics().lineStyle(1, MUTED, 0.8).strokeRect(-23, -70, 46, 70);
-    const arrow = text(this, 0, -35, '→', 26, '#8c9ba6');
-    const label = text(this, 0, 22, 'CONTINUE', 9, '#a9b5bd', false).setLetterSpacing(2);
-    this.portal = this.add.container(this.goalX, exitY - 10, [g, arrow, label]).setAlpha(this.phase ? 0 : 0.5);
+    for (const [source, x, y] of beat.loose ?? []) this.spawnToken(source, ox + x, y).home = [ox + x, y];
+    const steps = REGIONS[region].zones;
+    text(
+      local,
+      90,
+      188,
+      `${String(index + 1).padStart(2, '0')} / ${String(steps.length).padStart(2, '0')}`,
+      11,
+      '#a4b1ba',
+      false,
+    )
+      .setOrigin(0)
+      .setLetterSpacing(3);
+    text(local, 90, 218, beat.name, 31, '#b8c0c3', false).setOrigin(0);
+    if (!zone.duel) text(local, 90, 270, zone.subtitle, 13, '#a9b5bd', false).setOrigin(0);
+    this.zones.push(live);
+    return live;
   }
 
-  private deviceHost(): DeviceHost {
+  private hostFor(live: LiveZone, scene: Phaser.Scene): DeviceHost {
+    const ox = live.ox;
     return {
-      scene: this,
+      scene,
       accent: this.character.color,
-      boss: Boolean(this.phase),
-      core: this.core,
-      platform: (x, y, width, height, hidden) => {
-        const p = this.platform(x, y, width, height);
-        p.hidden = hidden;
-        return p;
+      boss: live.zone.duel,
+      core: live.core,
+      platform: (x, y, width, height, hidden) => this.zonePlatform(live, x, y, width, height, hidden),
+      removePlatform: (p) => {
+        live.platforms = live.platforms.filter((q) => q !== p);
+        this.removePlatform(p);
       },
-      removePlatform: (p) => this.removePlatform(p),
       launch: (vy) => {
         this.launchVy = vy;
       },
-      movePlatform: (p, x, y) => this.movePlatform(p, x, y),
-      addRamp: (ramp) => this.ramps.push(ramp),
-      player: () => ({ x: this.playerBody.center.x, top: this.playerBody.top, bottom: this.playerBody.bottom }),
-      hurt: (x) => this.damage(x),
-      burst: (x, y, color = INK, count, force) => this.dust.burst(x, y, color, count, force),
+      movePlatform: (p, x, y) => {
+        p.x = x;
+        p.y = y;
+        this.movePlatform(p, x + ox, y);
+      },
+      addRamp: (ramp) => live.ramps.push({ x1: ramp.x1 + ox, y1: ramp.y1, x2: ramp.x2 + ox, y2: ramp.y2 }),
+      player: () => ({ x: this.playerBody.center.x - ox, top: this.playerBody.top, bottom: this.playerBody.bottom }),
+      hurt: (x) => this.damage(x + ox),
+      burst: (x, y, color = INK, count, force) => this.dust.burst(x + ox, y, color, count, force),
       sound: (name) => this.args.audio.play(name),
       tone: (frequency, duration, gain = 0.2) => this.args.audio.tone(frequency, duration, 'sine', gain),
       time: () => this.worldClock,
     };
   }
 
-  private makeRacks(): void {
-    const { stock } = this.beat,
-      loose = (this.beat.loose ?? []).map(([source]) => source);
-    const unlocked = stock ?? this.save.unlocked.filter((t) => !loose.includes(t));
+  /** Racks offer the known tokens, minus those placed loose in this zone; a stock replaces them. */
+  private makeRacks(live: LiveZone): void {
+    live.racks.forEach((r) => r.container.destroy());
+    live.racks = [];
+    const beat = live.zone.beat,
+      { stock } = beat,
+      loose = (beat.loose ?? []).map(([source]) => source);
+    const available = stock ?? [...this.known].filter((t) => !loose.includes(t));
     const groups: [string, string[]][] = [
-      ['numbers', unlocked.filter((t) => !isOperator(t)).sort((a, b) => Number(a) - Number(b))],
+      ['numbers', available.filter((t) => !isOperator(t)).sort((a, b) => Number(a) - Number(b))],
       [
         'operators',
-        this.beat.noOperatorRack
-          ? []
-          : stock
-            ? stock.filter(isOperator)
-            : OPERATORS.filter((o) => unlocked.includes(o)),
+        beat.noOperatorRack ? [] : stock ? stock.filter(isOperator) : OPERATORS.filter((o) => available.includes(o)),
       ],
     ];
     groups
       .filter(([, values]) => values.length)
       .forEach(([name, choices], i) =>
-        this.racks.push(new Rack(this, 175 + i * 105, 557, choices, name, Boolean(stock))),
+        live.racks.push(new Rack(this, live.ox + 175 + i * 105, 557, choices, name, Boolean(stock))),
       );
   }
 
-  private platform(x: number, y: number, width: number, height: number): Platform {
+  /** Keeps the current zone and the next stretch of the spine built. Duel phases replace each other in place. */
+  private loadAhead(): void {
+    const order = zoneOrder(this.cur.region, this.cur.index);
+    const next = ALL_ZONES.slice(order + 1).find(({ zone }) => zone.x[0] >= this.cur.zone.x[1]);
+    if (next && !this.zones.some((z) => z.zone === next.zone)) this.buildZone(next.region, next.index);
+  }
+
+  private unloadZone(live: LiveZone): void {
+    live.device = undefined;
+    live.layer.destroy();
+    live.rail.container.destroy();
+    live.racks.forEach((r) => r.container.destroy());
+    live.platforms.forEach((p) => this.removePlatform(p));
+    live.boss?.formula.destroy();
+    live.boss?.label.destroy();
+    this.zones = this.zones.filter((z) => z !== live);
+  }
+
+  /** The zone where the player now is: enemies arrive, 𝑥 watches, a duel begins. */
+  private activate(chapterCard: boolean): void {
+    const beat = this.beat;
+    this.hitCount = this.bossStun = this.counterLock = 0;
+    this.attackTimer = this.phase ? 4.5 : 6;
+    this.introSafe = this.cur.region === 0 && this.cur.index === 0 ? 9 : 3;
+    this.reinforceTimer = 8;
+    this.cameo?.destroy();
+    this.cameo = undefined;
+    if (this.phase) this.buildBoss();
+    else
+      for (let i = 0; i < (beat.enemies ?? 0); i++)
+        this.spawnEnemy(this.cur.ox + (beat.layout === 'device' ? 330 + i * 190 : 790 + i * 330), 570);
+    if (!this.phase && beat.hazard && this.chapter >= 2)
+      this.cameo = new Formula(this, this.cur.ox + 1030, 230, '𝑥', 56, '#aab1b5').setDepth(4);
+    if (chapterCard) {
+      const region = REGIONS[this.cur.region];
+      this.args.emit({ type: 'chapter', chapter: this.chapter, title: region.title, knowledge: region.knowledge });
+    } else this.args.emit({ type: 'toast', text: beat.name, sub: beat.intro ?? beat.objective });
+  }
+
+  /** Crossing into the next zone makes it the checkpoint. The way back closes behind the player. */
+  private advanceTo(live: LiveZone): void {
+    const newRegion = live.region !== this.cur.region;
+    this.cur = live;
+    this.save.region = live.region;
+    this.save.zone = live.index;
+    this.save.known = [...this.known];
+    this.save.furthest = Math.max(this.save.furthest, live.region);
+    this.commitSave();
+    this.barrier.x = live.ox - 10;
+    this.movePlatform(this.barrier, live.ox - 10, this.barrier.rect.y);
+    for (const enemy of [...this.enemies]) {
+      this.dust.burst(enemy.rect.x, enemy.rect.y, INK, 10, 80);
+      this.removeEnemy(enemy);
+    }
+    for (const token of [...this.tokens]) if (token.state !== 'held' && token.x < live.ox) this.discardToken(token);
+    this.theftWarned = false;
+    this.activate(newRegion);
+    this.loadAhead();
+  }
+
+  /** The next boss phase rebuilds the arena in place. */
+  private nextPhase(): void {
+    const order = zoneOrder(this.cur.region, this.cur.index),
+      next = ALL_ZONES[order + 1];
+    const old = this.cur;
+    this.unloadZone(old);
+    this.cur = this.buildZone(next.region, next.index);
+    this.save.region = next.region;
+    this.save.zone = next.index;
+    this.save.known = [...this.known];
+    this.commitSave();
+    this.transition = false;
+    this.bolts.forEach((b) => b.glyph.destroy());
+    this.bolts = [];
+    this.activate(false);
+  }
+
+  private zonePlatform(
+    live: LiveZone,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    hidden?: boolean,
+  ): Platform {
+    const p = this.addPlatform(live.ox + x, y, width, height, hidden);
+    p.x = p.baseX = x;
+    live.platforms.push(p);
+    return p;
+  }
+  private addPlatform(x: number, y: number, width: number, height: number, hidden?: boolean): Platform {
     const rect = this.add.rectangle(x, y, width, height, 0x161b1e, 0.96);
-    this.physics.add.existing(rect, true);
+    this.ground.add(rect);
     const platform: Platform = {
       rect,
       body: rect.body as Phaser.Physics.Arcade.StaticBody,
       width,
       height,
+      x,
+      y,
       baseX: x,
       baseY: y,
-      phase: 0,
-      amplitude: 60,
+      hidden,
     };
     this.platforms.push(platform);
-    if (this.player?.active) this.collidePlayer(platform);
-    for (const token of this.tokens) this.physics.add.collider(token.collider, rect);
+    this.byRect.set(rect, platform);
     return platform;
   }
   private removePlatform(platform: Platform): void {
+    this.byRect.delete(platform.rect);
     platform.rect.destroy();
     this.platforms = this.platforms.filter((p) => p !== platform);
     if (this.standing === platform) this.standing = undefined;
   }
-  /** Moves a kinematic platform and carries whoever stands on it. */
+  /** Moves a kinematic platform (world coordinates) and carries whoever stands on it. */
   private movePlatform(p: Platform, x: number, y: number): void {
     const dx = x - p.rect.x,
       dy = y - p.rect.y;
@@ -374,15 +552,11 @@ export class Gameplay extends Phaser.Scene {
       this.player.y += dy;
     }
   }
-  private collidePlayer(p: Platform): void {
-    this.physics.add.collider(this.player, p.rect, () => {
-      if (this.playerBody.blocked.down && Math.abs(this.playerBody.bottom - p.body.top) < 8) this.standing = p;
-    });
-  }
+
   private spawnToken(source: string, x: number, y: number): Token {
     const token = new Token(this, source, x, y);
+    token.ground = this.physics.add.collider(token.collider, this.ground);
     this.tokens.push(token);
-    this.platforms.forEach((p) => this.physics.add.collider(token.collider, p.rect));
     return token;
   }
   private discardToken(token: Token): void {
@@ -408,64 +582,49 @@ export class Gameplay extends Phaser.Scene {
       stun: 0,
       kind: isOperator(token) ? 'operator' : 'cluster',
       token,
+      colliders: [],
     };
+    enemy.colliders.push(
+      this.physics.add.collider(rect, this.ground),
+      this.physics.add.overlap(this.player, rect, () => {
+        if (enemy.stun <= 0) this.damage(enemy.rect.x);
+      }),
+    );
     this.enemies.push(enemy);
-    this.platforms.forEach((p) => this.physics.add.collider(rect, p.rect));
-    this.physics.add.overlap(this.player, rect, () => {
-      if (enemy.stun <= 0) this.damage(enemy.rect.x);
-    });
+  }
+  private removeEnemy(enemy: Enemy): void {
+    enemy.colliders.forEach((c) => c.destroy());
+    enemy.glyph.destroy();
+    enemy.rect.destroy();
+    this.enemies = this.enemies.filter((e) => e !== enemy);
   }
 
-  /** Until the beat is solved, fallen enemies are replaced from whichever side the player is not on. */
+  /** Until the zone is solved, fallen enemies are replaced from whichever side the player is not on. */
   private reinforce(dt: number): void {
-    if (this.phase || this.solved || this.transition || this.enemies.length >= (this.beat.enemies ?? 0)) return;
+    if (this.phase || this.cur.solved || this.transition || this.enemies.length >= (this.beat.enemies ?? 0)) return;
     this.reinforceTimer -= dt;
     if (this.reinforceTimer > 0) return;
     this.reinforceTimer = 7;
-    const x = this.player.x < 475 ? 880 : 70;
+    const x = this.cur.ox + (this.player.x < this.cur.ox + 475 ? 880 : 70);
     this.spawnEnemy(x, 540);
     this.dust.burst(x, 540, HAZARD, 18, 120);
   }
 
+  private get core(): { x: number; y: number } {
+    return { x: this.cur.ox + this.cur.core.x, y: this.cur.core.y };
+  }
   private buildBoss(): void {
-    this.bossFormula = this.makeBossFormula(this.phase!.component, this.encounter.chapter === 6 ? 44 : 65);
-    this.bossLabel = text(
-      this,
-      this.core.x + 25,
-      this.core.y + 88,
-      this.phase!.attack,
-      10,
-      '#a4adb3',
-      false,
-    ).setLetterSpacing(4);
+    const core = this.core,
+      size = this.chapter === 6 ? 44 : 65;
+    const formula = new Formula(this, 0, core.y - 5, this.phase!.component, size).setDepth(8);
+    formula.setScale(Math.min(1, 560 / formula.getBounds().width));
+    formula.x += core.x - formula.getBounds().centerX;
+    const label = text(this, core.x + 25, core.y + 88, this.phase!.attack, 10, '#a4adb3', false).setLetterSpacing(4);
+    this.cur.boss = { formula, label };
     this.args.audio.play('boss');
   }
-  private makeBossFormula(source: string, size: number): Formula {
-    const formula = new Formula(this, 0, this.core.y - 5, source, size).setDepth(8);
-    formula.setScale(Math.min(1, 560 / formula.getBounds().width));
-    formula.x += this.core.x - formula.getBounds().centerX;
-    return formula;
-  }
-  private drawBackdrop(): void {
-    const g = this.background;
-    g.fillStyle(0x090b0d).fillRect(0, -400, this.worldWidth, 1500);
-    g.lineStyle(1, 0x66717b, 0.04);
-    for (let x = 0; x < this.worldWidth; x += 80) g.lineBetween(x, -200, x, 1000);
-    for (let y = -160; y < 1000; y += 80) g.lineBetween(0, y, this.worldWidth, y);
-    text(
-      this,
-      90,
-      188,
-      `${String(this.save.encounter + 1).padStart(2, '0')} / ${String(CAMPAIGN.length).padStart(2, '0')}`,
-      11,
-      '#a4b1ba',
-      false,
-    )
-      .setOrigin(0)
-      .setLetterSpacing(3);
-    text(this, 90, 218, this.beat.name, 31, '#b8c0c3', false).setOrigin(0);
-    if (!this.phase) text(this, 90, 270, this.encounter.subtitle, 13, '#a9b5bd', false).setOrigin(0);
-  }
+
+  // ---------- Input ----------
 
   private aim(): number {
     const pointer = this.input.activePointer;
@@ -474,7 +633,7 @@ export class Gameplay extends Phaser.Scene {
   }
   private nearbyRack(): Rack | undefined {
     const pointer = this.input.activePointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
-    const near = this.racks.filter(
+    const near = this.cur.racks.filter(
       (r) => r.container.visible && Phaser.Math.Distance.Between(this.player.x, this.player.y, r.x, r.y) < 115,
     );
     return near.sort(
@@ -594,7 +753,7 @@ export class Gameplay extends Phaser.Scene {
       this.handling = 0.3;
       this.args.audio.play('hit');
       this.dust.burst(this.player.x + this.facing * 45, this.player.y - 5, this.character.color, 5, 70);
-      for (const enemy of this.enemies)
+      for (const enemy of [...this.enemies])
         if (
           Math.abs(enemy.rect.y - this.player.y) < 70 &&
           (enemy.rect.x - this.player.x) * this.facing > -10 &&
@@ -618,6 +777,8 @@ export class Gameplay extends Phaser.Scene {
     }
   }
 
+  // ---------- Rails ----------
+
   private evaluateRail(): void {
     if (!this.nearRail() || this.rail.cooldown > 0 || this.transition || this.dying) return;
     const { result } = this.rail;
@@ -633,7 +794,7 @@ export class Gameplay extends Phaser.Scene {
       this.rail.status.setText('Let the current counter land.');
       return;
     }
-    if (!this.phase && this.solved) return;
+    if (!this.phase && this.cur.solved) return;
     const value = result.value!,
       verdict = judge(this.beat, value),
       display = this.rail.display();
@@ -656,23 +817,32 @@ export class Gameplay extends Phaser.Scene {
     }
     this.args.audio.play('solve');
     this.rail.solved = true;
+    this.learn();
     if (this.phase) this.performCounter();
     else {
-      this.solved = true;
       this.materialize(true);
-      this.portal.setAlpha(1);
-      this.args.emit({ type: 'toast', text: display, sub: 'Now use what you made.' });
+      this.solveZone();
     }
   }
 
   private onDeviceSuccess(): void {
     this.rail.solved = true;
+    this.learn();
     if (this.phase) this.performCounter(this.device!.origin());
-    else {
-      this.solved = true;
-      this.portal.setAlpha(1);
-      this.args.emit({ type: 'toast', text: this.rail.display(), sub: 'Now use what you made.' });
-    }
+    else this.solveZone();
+  }
+
+  /** A working rail's tokens become known, so racks ahead offer them. */
+  private learn(): void {
+    const before = this.known.size;
+    [...this.rail.values, ...this.beat.rail.solution].forEach((t) => t && this.known.add(t));
+    if (this.known.size > before)
+      this.zones.filter((z) => !z.solved && z !== this.cur).forEach((z) => this.makeRacks(z));
+  }
+  /** The zone's gate opens. */
+  private solveZone(): void {
+    this.cur.solved = true;
+    if (!this.phase) this.args.emit({ type: 'toast', text: this.rail.display(), sub: 'Now use what you made.' });
   }
 
   private animateSimplification(result: string, success: boolean): void {
@@ -717,14 +887,15 @@ export class Gameplay extends Phaser.Scene {
 
   /** The gap bridge: its length is the value, one tile per unit of the target. */
   private materialize(matched: boolean): void {
-    for (const p of this.builtPlatforms) p.rect.destroy();
-    this.platforms = this.platforms.filter((p) => !this.builtPlatforms.includes(p));
-    this.standing = undefined;
+    const live = this.cur;
+    if (live.bridge) {
+      live.platforms = live.platforms.filter((p) => p !== live.bridge);
+      this.removePlatform(live.bridge);
+    }
     const width = matched
       ? 610
       : 610 * Phaser.Math.Clamp(this.effectMagnitude / (this.beat.rail.target ?? 1), 0.08, 1.7);
-    const bridge = this.platform(940 + width / 2, 546, width, 12);
-    this.builtPlatforms = [bridge];
+    const bridge = (live.bridge = this.zonePlatform(live, 940 + width / 2, 546, width, 12));
     if (!matched) return;
     bridge.rect.setAlpha(0);
     this.tweens.add({ targets: bridge.rect, alpha: 1, duration: 450 });
@@ -732,10 +903,12 @@ export class Gameplay extends Phaser.Scene {
     if (!this.args.settings.reducedMotion) this.cameras.main.shake(120, 0.002);
   }
 
+  // ---------- The Unknown ----------
+
   private performCounter(from?: { x: number; y: number }): void {
     this.counterLock = 2.7;
     const start = from
-        ? new Phaser.Math.Vector2(from.x, from.y)
+        ? new Phaser.Math.Vector2(this.cur.ox + from.x, from.y)
         : new Phaser.Math.Vector2(this.rail.x, this.rail.y - 35),
       end = new Phaser.Math.Vector2(this.core.x, this.core.y);
     const via = new Phaser.Math.Vector2((start.x + end.x) / 2 - 60, Math.min(start.y, end.y) - 60);
@@ -744,70 +917,87 @@ export class Gameplay extends Phaser.Scene {
   }
 
   private bossHit(): void {
-    if (this.transition) return;
+    if (this.transition || !this.phase) return;
+    const core = this.core,
+      formula = this.cur.boss?.formula;
     this.hitCount++;
     this.bossStun = Math.max(this.bossStun, 1.4);
-    this.dust.burst(this.core.x, this.core.y, this.character.color, 65, 250);
+    this.dust.burst(core.x, core.y, this.character.color, 65, 250);
     this.args.audio.play('hit');
     if (!this.args.settings.reducedMotion) this.cameras.main.shake(200, 0.004);
-    this.bossFormula?.setAlpha(0.2);
-    this.tweens.add({ targets: this.bossFormula, alpha: 1, duration: 400 });
-    if (this.hitCount >= this.phase!.hits) {
-      this.bolts.forEach((b) => b.glyph.destroy());
-      this.bolts = [];
-      this.warnings.forEach((w) => w.glyph.destroy());
-      this.warnings = [];
-      this.transition = true;
-      if (this.save.encounter === CAMPAIGN.length - 1 && this.save.beat === this.encounter.phases!.length - 1) {
-        this.finishCampaign();
-        return;
-      }
-      this.args.emit({ type: 'toast', text: this.phase!.name, sub: 'Term removed.' });
-      ['+', '−', '1', '(', ')', '𝑥'].forEach((piece, i) => {
-        const glyph = new Formula(this, this.core.x, this.core.y, piece, 27).setDepth(25);
-        this.tweens.add({
-          targets: glyph,
-          x: this.core.x + Math.cos(i) * 280,
-          y: this.core.y + Math.sin(i) * 200,
-          rotation: i,
-          alpha: 0,
-          duration: 1100,
-          onComplete: () => glyph.destroy(),
-        });
-      });
-      this.time.delayedCall(1800, () => this.advance());
-    } else {
+    formula?.setAlpha(0.2);
+    this.tweens.add({ targets: formula, alpha: 1, duration: 400 });
+    if (this.hitCount < this.phase.hits) {
       this.rail.status.setText('Counter landed. Shape the next one.');
       this.args.emit({
         type: 'toast',
-        text: `${this.hitCount} / ${this.phase!.hits}`,
+        text: `${this.hitCount} / ${this.phase.hits}`,
         sub: 'The expression is coming apart.',
       });
       if (this.device)
         this.time.delayedCall(600, () => {
-          this.device!.reset();
-          this.deviceHandled = false;
+          this.device?.reset();
+          this.cur.deviceHandled = false;
         });
+      return;
     }
+    this.bolts.forEach((b) => b.glyph.destroy());
+    this.bolts = [];
+    this.warnings.forEach((w) => w.glyph.destroy());
+    this.warnings = [];
+    this.transition = true;
+    const order = zoneOrder(this.cur.region, this.cur.index),
+      next = ALL_ZONES[order + 1];
+    if (!next) {
+      this.finishCampaign();
+      return;
+    }
+    this.args.emit({ type: 'toast', text: this.phase.name, sub: 'Term removed.' });
+    ['+', '−', '1', '(', ')', '𝑥'].forEach((piece, i) => {
+      const glyph = new Formula(this, core.x, core.y, piece, 27).setDepth(25);
+      this.tweens.add({
+        targets: glyph,
+        x: core.x + Math.cos(i) * 280,
+        y: core.y + Math.sin(i) * 200,
+        rotation: i,
+        alpha: 0,
+        duration: 1100,
+        onComplete: () => glyph.destroy(),
+      });
+    });
+    const live = this.cur;
+    this.time.delayedCall(1800, () => {
+      if (this.cur !== live) return;
+      if (next.zone.x[0] === live.zone.x[0]) this.nextPhase();
+      else {
+        // The duel is over: the arena opens onto the next region.
+        this.transition = false;
+        live.boss?.formula.destroy();
+        live.boss?.label.destroy();
+        live.boss = undefined;
+        this.solveZone();
+      }
+    });
   }
 
   /** The Unknown collapses into the value it always had. */
   private finishCampaign(): void {
+    const core = this.core;
     this.save.complete = true;
     this.commitSave();
     this.args.audio.play('unlock');
-    this.bossLabel?.destroy();
-    this.tweens.add({ targets: this.bossFormula, alpha: 0, scale: 0.3, duration: 1200, ease: 'Cubic.easeIn' });
-    const square = text(this, this.core.x - 100, this.core.y, '(𝑥 − 1)² = 0', 54)
+    this.cur.boss?.label.destroy();
+    this.tweens.add({ targets: this.cur.boss?.formula, alpha: 0, scale: 0.3, duration: 1200, ease: 'Cubic.easeIn' });
+    const square = text(this, core.x - 100, core.y, '(𝑥 − 1)² = 0', 54)
       .setDepth(40)
       .setAlpha(0);
     this.tweens.add({ targets: square, alpha: 1, duration: 900, delay: 900, hold: 1600, yoyo: true });
     this.time.delayedCall(4200, () => {
-      const one = text(this, this.core.x - 100, this.core.y, '𝑥 = 1', 96, this.character.hex)
+      const one = text(this, core.x - 100, core.y, '𝑥 = 1', 96, this.character.hex)
         .setDepth(40)
         .setAlpha(0);
       this.tweens.add({ targets: one, alpha: 1, duration: 1200 });
-      this.dust.burst(this.core.x - 100, this.core.y, this.character.color, 130, 350);
+      this.dust.burst(core.x - 100, core.y, this.character.color, 130, 350);
       this.args.emit({ type: 'toast', text: '𝑥 = 1', sub: 'It began with one.' });
     });
     this.time.delayedCall(8500, () => this.args.emit({ type: 'complete', elapsed: this.save.elapsed }));
@@ -819,9 +1009,13 @@ export class Gameplay extends Phaser.Scene {
     const slot = Phaser.Utils.Array.GetRandom(slots),
       source = this.rail.remove(slot)!;
     const x = this.rail.x + this.rail.slotPositions[slot],
-      y = this.rail.y - 50;
+      y = this.rail.y - 50,
+      ox = this.cur.ox;
     const token = this.spawnToken(source, x, y);
-    token.home = [Phaser.Math.Clamp(x + (Math.random() < 0.5 ? -1 : 1) * 260, 60, this.phase ? 1220 : 900), 560];
+    token.home = [
+      Phaser.Math.Clamp(x + (Math.random() < 0.5 ? -1 : 1) * 260, ox + 60, ox + (this.phase ? 1220 : 900)),
+      560,
+    ];
     token.release(x, y, (token.home[0] - x) * 1.3, -380);
     this.dust.burst(x, this.rail.y, HAZARD, 14, 110);
     this.args.audio.play('wrong');
@@ -838,9 +1032,7 @@ export class Gameplay extends Phaser.Scene {
     this.dust.burst(enemy.rect.x, enemy.rect.y, INK, 12, 100);
     if (enemy.hp <= 0) {
       this.spawnToken(enemy.token, enemy.rect.x, Math.min(enemy.rect.y, 580)).body.setVelocity(force * 0.3, -150);
-      enemy.glyph.destroy();
-      enemy.rect.destroy();
-      this.enemies = this.enemies.filter((e) => e !== enemy);
+      this.removeEnemy(enemy);
     }
   }
   private damage(fromX: number): void {
@@ -873,24 +1065,10 @@ export class Gameplay extends Phaser.Scene {
     this.scene.resume();
   }
   private commitSave(): void {
-    this.args.emit({ type: 'save', save: { ...this.save } });
+    this.args.emit({ type: 'save', save: { ...this.save, known: [...this.save.known] } });
   }
-  private advance(): void {
-    const steps = this.encounter.phases ?? this.encounter.beats;
-    const oldChapter = this.encounter.chapter;
-    if (this.save.beat + 1 < steps.length) this.save.beat++;
-    else {
-      this.save.encounter++;
-      this.save.beat = 0;
-    }
-    this.save.furthest = Math.max(this.save.furthest, this.save.encounter);
-    this.commitSave();
-    this.scene.restart({
-      ...this.args,
-      save: this.save,
-      chapterCard: CAMPAIGN[this.save.encounter].chapter !== oldChapter,
-    });
-  }
+
+  // ---------- Hazards ----------
 
   private warn(kind: string, x: number, y: number, tx: number, ty: number, delay = 0.95): void {
     const total = delay * this.character.timing;
@@ -907,10 +1085,10 @@ export class Gameplay extends Phaser.Scene {
   private attackPattern(): void {
     if (!this.phase && !this.beat.hazard) return;
     const kind = this.beat.hazard ?? 'bolts';
-    if (this.beat.theft && !this.solved && Math.random() < 0.6) this.stealOperator();
+    if (this.beat.theft && !this.cur.solved && Math.random() < 0.6) this.stealOperator();
     if (kind === 'charge') return;
     const boss = Boolean(this.phase),
-      x = boss ? this.core.x + 10 : (this.cameo?.x ?? Math.min(this.worldWidth - 50, this.player.x + 560)),
+      x = boss ? this.core.x + 10 : (this.cameo?.x ?? this.player.x + 560),
       y = boss ? this.core.y + 45 : this.cameo ? this.cameo.y + 20 : 300;
     if (kind === 'negative') {
       this.warn(kind, x, y, this.player.x, this.player.y);
@@ -923,7 +1101,7 @@ export class Gameplay extends Phaser.Scene {
       if (boss) this.warn(kind, x, 390, this.player.x, 460, 1.6);
     } else {
       this.warn(kind, x, y, this.player.x, this.player.y, 1.1);
-      if (boss && this.encounter.chapter === 6)
+      if (boss && this.chapter === 6)
         for (let i = 0; i < 3; i++) this.warn(kind, x, y + i * 65, this.player.x, 420 + i * 65, 1.2 + i * 0.2);
     }
     this.args.audio.tone(100, 0.35, 'sine', 0.07, 70);
@@ -934,7 +1112,7 @@ export class Gameplay extends Phaser.Scene {
       warning.timer -= dt;
       if (warning.timer <= 0) {
         const angle = Phaser.Math.Angle.Between(warning.x, warning.y, warning.tx, warning.ty);
-        const speed = 245 + this.encounter.chapter * 20;
+        const speed = 245 + this.chapter * 20;
         const symbol = ({ negative: '−1', vectors: '×', waves: '∿' } as Record<string, string>)[warning.kind] ?? '÷';
         const glyph = new Formula(this, warning.x, warning.y, symbol, 30).setDepth(16);
         this.bolts.push({
@@ -952,6 +1130,7 @@ export class Gameplay extends Phaser.Scene {
         this.warnings.splice(this.warnings.indexOf(warning), 1);
       }
     }
+    const view = this.cameras.main.worldView;
     for (const bolt of [...this.bolts]) {
       bolt.age += dt;
       bolt.x += bolt.vx * dt;
@@ -963,7 +1142,7 @@ export class Gameplay extends Phaser.Scene {
         this.damage(bolt.x);
         bolt.age = 10;
       }
-      if (bolt.age > 8 || bolt.x < -100 || bolt.x > this.worldWidth + 100 || bolt.y > 900 || bolt.y < -300) {
+      if (bolt.age > 8 || bolt.x < view.x - 300 || bolt.x > view.right + 300 || bolt.y > 900 || bolt.y < -300) {
         bolt.glyph.destroy();
         this.bolts.splice(this.bolts.indexOf(bolt), 1);
       }
@@ -986,13 +1165,17 @@ export class Gameplay extends Phaser.Scene {
     }
   }
 
+  // ---------- Frame ----------
+
   update(_time: number, delta: number): void {
     if (!this.playerBody) return;
     const dt = Math.min(delta / 1000, 0.035);
     this.clock += dt;
     this.save.elapsed += dt;
     this.pauseDebounce = Math.max(0, this.pauseDebounce - dt);
-    const combat = Boolean(this.phase || this.beat.enemies || this.beat.hazard) && !this.transition;
+    const combat =
+      Boolean(this.phase || ((this.beat.enemies || this.beat.hazard) && !this.cur.solved) || this.enemies.length) &&
+      !this.transition;
     const manipulating = Boolean(this.held) || this.editTimer > 0;
     const slow = combat && manipulating && this.focus > 0;
     const scale = slow ? 0.35 : 1;
@@ -1023,12 +1206,17 @@ export class Gameplay extends Phaser.Scene {
       this.meleeQueue = false;
     }
     this.updateMovement(dt, scale);
-    this.moveLifts();
-    this.device?.update(worldDt);
-    if (this.device) this.portal.y = this.device.goal.y - 10;
-    if (this.device?.state === 'success' && !this.deviceHandled) {
-      this.deviceHandled = true;
-      this.onDeviceSuccess();
+    for (const live of this.zones) {
+      live.device?.update(worldDt);
+      if (live.device?.state === 'success' && !live.deviceHandled && live === this.cur) {
+        live.deviceHandled = true;
+        this.onDeviceSuccess();
+      }
+      if (live.solved && live.gate.y > GATE_TOP - 300) {
+        const y = live.gate.y - 240 * dt;
+        live.gate.y = y;
+        this.movePlatform(live.gate, live.ox + live.gate.x, y);
+      }
     }
     this.enemies.forEach((enemy) => {
       enemy.time += worldDt;
@@ -1080,17 +1268,18 @@ export class Gameplay extends Phaser.Scene {
         if (token.body.speed < 45 && token.age > 0.5) token.state = 'loose';
       }
     });
+    const view = this.cameras.main.worldView;
     for (const token of [...this.tokens])
       if (
         token.state !== 'held' &&
         (token.body.center.y > 820 ||
           (!token.home && token.age > 40) ||
-          token.x < -80 ||
-          token.x > this.worldWidth + 80)
+          token.x < this.cur.ox - 80 ||
+          token.x > view.right + 1500)
       ) {
-        if (token.home) {
+        if (token.home && token.home[0] >= this.cur.ox) {
           token.release(...token.home);
-          if (this.save.encounter === 0 && this.save.beat === 0) token.body.setGravityY(0);
+          if (this.cur.region === 0 && this.cur.index === 0 && token.source === '1') token.body.setGravityY(0);
         } else this.discardToken(token);
       }
     if (this.tokens.length > 35) {
@@ -1106,32 +1295,40 @@ export class Gameplay extends Phaser.Scene {
       if (this.attackTimer <= 0) {
         this.attackPattern();
         this.attackTimer = this.phase
-          ? Math.max(2.1, 4.2 - this.encounter.chapter * 0.34)
-          : Math.max(3.2, 4.6 - this.encounter.chapter * 0.2);
+          ? Math.max(2.1, 4.2 - this.chapter * 0.34)
+          : Math.max(3.2, 4.6 - this.chapter * 0.2);
       }
     }
     this.reinforce(worldDt);
     this.updateProjectiles(worldDt);
     if (this.playerBody.center.y > 830 && !this.dying) this.die();
-    if (
-      !this.phase &&
-      this.solved &&
-      !this.transition &&
-      Math.abs(this.playerBody.center.x - this.goalX) < 45 &&
-      Math.abs(this.playerBody.bottom - this.portal.y) < 90
-    ) {
-      this.transition = true;
-      this.args.audio.play('unlock');
-      this.time.delayedCall(650, () => this.advance());
-    }
+    const next = this.zones.find((z) => z.ox === this.cur.zone.x[1]);
+    if (next && this.cur.solved && !this.transition && this.playerBody.left > next.ox + 20) this.advanceTo(next);
+    this.updateCamera(dt);
     this.drawWorld(dt, slow);
     this.dust.update(worldDt);
-    this.args.audio.update(worldDt, this.encounter.chapter, combat);
+    this.args.audio.update(worldDt, this.chapter, combat);
     this.hudTimer -= dt;
     if (this.hudTimer <= 0) {
       this.updateHud();
       this.hudTimer = 0.1;
     }
+  }
+
+  /**
+   * The camera never shows what lies behind the checkpoint once it has scrolled past it, and holds still on a
+   * duel's arena. Zones behind the view are unloaded.
+   */
+  private updateCamera(dt: number): void {
+    const camera = this.cameras.main,
+      live = this.cur;
+    const arena = live.zone.duel && !live.solved;
+    if (arena) this.leftBound = Math.min(live.ox, this.leftBound + Math.max(4, (live.ox - this.leftBound) * 4 * dt));
+    else this.leftBound = Math.max(this.leftBound, Math.min(live.ox, camera.scrollX));
+    const right = arena ? live.zone.x[1] : Math.max(...this.zones.map((z) => z.zone.x[1]));
+    camera.setBounds(this.leftBound, -70, Math.max(1280, right - this.leftBound), 820);
+    for (const z of [...this.zones]) if (z !== live && z.zone.x[1] <= this.leftBound) this.unloadZone(z);
+    this.grid.setTilePosition(camera.scrollX, camera.scrollY);
   }
 
   /** Straight ramps (the Pythagoras plank) carry the player along their slope. */
@@ -1140,7 +1337,7 @@ export class Gameplay extends Phaser.Scene {
     if (this.vy < 0) return;
     const x = this.playerBody.center.x,
       bottom = this.playerBody.bottom;
-    for (const r of this.ramps) {
+    for (const r of this.zones.flatMap((z) => z.ramps)) {
       if (x < r.x1 || x > r.x2) continue;
       const y = r.y1 + ((r.y2 - r.y1) * (x - r.x1)) / (r.x2 - r.x1);
       if (bottom >= y - 4 && bottom <= y + 22) {
@@ -1186,61 +1383,60 @@ export class Gameplay extends Phaser.Scene {
       this.args.audio.play('throw');
     }
     this.playerBody.setVelocity(this.vx / scale, this.vy / scale);
-    if (this.player.x < 18) {
-      this.player.x = 18;
-      this.vx = Math.max(0, this.vx);
-    }
-    if (this.player.x > this.worldWidth - 18) {
-      this.player.x = this.worldWidth - 18;
-      this.vx = Math.min(0, this.vx);
-    }
-  }
-
-  private moveLifts(): void {
-    for (const p of this.platforms)
-      if (p.motion === 'lift')
-        this.movePlatform(p, p.baseX, p.baseY + Math.sin(this.worldClock * 1.05 + p.phase) * p.amplitude);
   }
 
   private drawWorld(dt: number, slow: boolean): void {
     const g = this.geometry.clear(),
       overlay = this.overlay.clear(),
-      fg = this.figures.clear();
+      fg = this.figures.clear(),
+      view = this.cameras.main.worldView;
     this.platforms.forEach((p) => {
       if (p.hidden) return;
-      g.lineStyle(p.height > 15 ? 1.2 : 1.7, INK, p.rect.alpha * (p.motion ? 0.85 : 0.6)).lineBetween(
+      g.lineStyle(p.height > 15 ? 1.2 : 1.7, INK, p.rect.alpha * 0.6).lineBetween(
         p.rect.x - p.width / 2,
         p.rect.y - p.height / 2,
         p.rect.x + p.width / 2,
         p.rect.y - p.height / 2,
       );
     });
-    if (!this.solved && this.beat.layout === 'gap') {
-      // Dashed tiles show how long the bridge must be.
-      const tiles = this.beat.rail.target ?? 1,
-        w = 610 / tiles;
-      g.lineStyle(1, INK, 0.35);
-      for (let i = 0; i < tiles; i++)
-        for (let x = 944 + i * w; x < 936 + (i + 1) * w; x += 20)
-          g.lineBetween(x, 540, Math.min(x + 10, 936 + (i + 1) * w), 540).lineBetween(
-            x,
-            552,
-            Math.min(x + 10, 936 + (i + 1) * w),
-            552,
-          );
-      for (let i = 0; i <= tiles; i++) g.lineBetween(940 + i * w, 540, 940 + i * w, 552);
+    for (const live of this.zones) {
+      const gate = live.gate,
+        top = gate.rect.y - gate.height / 2,
+        bottom = gate.rect.y + gate.height / 2,
+        x = gate.rect.x;
+      if (bottom > view.y) {
+        g.lineStyle(2, INK, 0.7).strokeRect(x - 15, top, 30, gate.height);
+        for (let y = Math.max(top, view.y - 45); y < bottom - 30; y += 45)
+          g.lineStyle(1, INK, 0.2).lineBetween(x - 15, y, x + 15, y + 30);
+      }
+      if (!live.solved && live.zone.beat.layout === 'gap') {
+        // Dashed tiles show how long the bridge must be.
+        const tiles = live.zone.beat.rail.target ?? 1,
+          w = 610 / tiles,
+          ox = live.ox;
+        g.lineStyle(1, INK, 0.35);
+        for (let i = 0; i < tiles; i++)
+          for (let x = 944 + i * w; x < 936 + (i + 1) * w; x += 20)
+            g.lineBetween(ox + x, 540, ox + Math.min(x + 10, 936 + (i + 1) * w), 540).lineBetween(
+              ox + x,
+              552,
+              ox + Math.min(x + 10, 936 + (i + 1) * w),
+              552,
+            );
+        for (let i = 0; i <= tiles; i++) g.lineBetween(ox + 940 + i * w, 540, ox + 940 + i * w, 552);
+      }
+      for (const r of live.ramps) g.lineStyle(7, this.character.color, 0.8).lineBetween(r.x1, r.y1, r.x2, r.y2);
+      if (live.device) live.device.draw(live.sketch.clear());
     }
-    for (const r of this.ramps) g.lineStyle(7, this.character.color, 0.8).lineBetween(r.x1, r.y1, r.x2, r.y2);
     if (this.beat.hazard === 'waves') {
       g.lineStyle(1, INK, 0.22).beginPath();
-      for (let x = 0; x <= this.worldWidth; x += 8) {
+      for (let x = Math.floor(view.x / 8) * 8; x <= view.right + 8; x += 8) {
         const y = 380 + Math.sin(x / 125 + this.worldClock) * 70;
-        if (!x) g.moveTo(x, y);
+        if (x <= view.x) g.moveTo(x, y);
         else g.lineTo(x, y);
       }
       g.strokePath();
     }
-    this.device?.draw(g);
     this.warnings.forEach((w) => {
       const alpha = 0.18 + 0.45 * (1 - w.timer / w.total);
       overlay.lineStyle(1, HAZARD, alpha);
@@ -1290,27 +1486,29 @@ export class Gameplay extends Phaser.Scene {
         .arc(this.player.x, this.player.y - 8, 55, this.facing > 0 ? -0.8 : 2.3, this.facing > 0 ? 0.8 : 3.9)
         .strokePath();
     }
-    if (this.phase && this.bossFormula && !(this.transition && this.save.complete)) {
-      this.bossFormula.y = this.core.y - 5 + Math.sin(this.worldClock * 1.5) * (this.bossStun > 0 ? 2 : 12);
+    const boss = this.cur.boss;
+    if (this.phase && boss && !(this.transition && this.save.complete)) {
+      const core = this.core;
+      boss.formula.y = core.y - 5 + Math.sin(this.worldClock * 1.5) * (this.bossStun > 0 ? 2 : 12);
       const radius = 123,
         angle = this.worldClock * 0.5;
       for (let i = 0; i < this.phase.hits; i++) {
         const theta = angle + (i / this.phase.hits) * Math.PI * 2;
         g.lineStyle(2, i < this.hitCount ? this.character.color : INK, i < this.hitCount ? 0.12 : 0.5)
           .beginPath()
-          .arc(this.core.x + 10, this.core.y - 2, radius + i * 10, theta, theta + 0.9)
+          .arc(core.x + 10, core.y - 2, radius + i * 10, theta, theta + 0.9)
           .strokePath();
       }
-      if (this.encounter.chapter === 6) {
+      if (this.chapter === 6) {
         const shrink = this.bossStun > 0 ? 0.75 : 1;
         for (let arm = 0; arm < 6; arm++) {
           const base = (arm * Math.PI) / 3 + this.worldClock * 0.07;
-          let lastX = this.core.x + 10,
-            lastY = this.core.y - 2;
+          let lastX = core.x + 10,
+            lastY = core.y - 2;
           for (let node = 1; node <= 5; node++) {
             const a = base + Math.sin(this.worldClock * 0.7 + node * 0.6) * 0.22;
-            const x = this.core.x + 10 + Math.cos(a) * node * 43 * shrink,
-              y = this.core.y - 2 + Math.sin(a) * node * 43 * shrink;
+            const x = core.x + 10 + Math.cos(a) * node * 43 * shrink,
+              y = core.y - 2 + Math.sin(a) * node * 43 * shrink;
             g.lineStyle(1.2, INK, 0.15 + node * 0.025).lineBetween(lastX, lastY, x, y);
             g.fillStyle(INK, 0.3).fillCircle(x, y, node === 5 ? 4 : 2);
             lastX = x;
@@ -1320,9 +1518,9 @@ export class Gameplay extends Phaser.Scene {
       }
     }
     if (this.cameo) {
-      this.cameo.x = Math.min(this.worldWidth - 100, this.cameras.main.scrollX + 1060);
+      this.cameo.x = Math.min(this.cur.zone.x[1] - 100, view.x + 1060);
       this.cameo.y = 230 + Math.sin(this.worldClock * 0.8) * 25;
-      this.cameo.setAlpha(this.solved ? 0.25 : 0.65);
+      this.cameo.setAlpha(this.cur.solved ? 0.25 : 0.65);
     }
     if (slow)
       overlay
@@ -1341,7 +1539,13 @@ export class Gameplay extends Phaser.Scene {
     }
     const nearby = this.nearRail();
     this.rail.selected = this.selectedSlot();
-    this.rail.draw(this.clock, nearby, this.held?.source ?? null, this.character.id === 'yellow');
+    for (const live of this.zones)
+      live.rail.draw(
+        this.clock,
+        live === this.cur && nearby,
+        live === this.cur ? (this.held?.source ?? null) : null,
+        this.character.id === 'yellow',
+      );
     const rack = this.nearbyRack();
     if (nearby)
       this.hint.setText(
@@ -1354,24 +1558,23 @@ export class Gameplay extends Phaser.Scene {
         `E  take ${notation(rack.source)}     ·     Scroll / Q  choose symbol     ·     ${rack.index + 1} / ${rack.choices.length}`,
       );
     else if (this.held) this.hint.setText('E  drop     ·     Aim + click  throw');
-    else if (this.clock < 18 && this.save.encounter === 0)
+    else if (this.clock < 18 && this.cur.region === 0 && this.cur.index === 0)
       this.hint.setText('A D  move     ·     Space  jump     ·     E  pick up');
     else this.hint.setText('');
   }
 
   private updateHud(): void {
+    const steps = REGIONS[this.cur.region].zones;
     this.args.emit({
       type: 'hud',
       hp: this.hp,
       focus: this.focus,
       maxFocus: this.character.focus,
-      objective: this.solved ? 'Reach the open doorway.' : this.beat.objective,
-      chapter: this.encounter.chapter,
-      title: this.encounter.title,
-      phase: `${this.save.beat + 1} / ${(this.encounter.phases ?? this.encounter.beats).length}`,
-      progress:
-        (this.save.encounter + this.save.beat / (this.encounter.phases ?? this.encounter.beats).length) /
-        CAMPAIGN.length,
+      objective: this.cur.solved ? 'Go on through the open gate.' : this.beat.objective,
+      chapter: this.chapter,
+      title: this.cur.zone.title,
+      phase: `${this.cur.index + 1} / ${steps.length}`,
+      progress: zoneOrder(this.cur.region, this.cur.index) / ZONE_COUNT,
     });
   }
 }

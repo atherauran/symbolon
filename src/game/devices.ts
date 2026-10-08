@@ -29,16 +29,16 @@ const rad = (degrees: number) => (degrees * Math.PI) / 180;
 const approach = (value: number, target: number, step: number) =>
   Math.abs(target - value) <= step ? target : value + Math.sign(target - value) * step;
 
+/** A solid platform. `x`, `y`, `baseX` and `baseY` are in its device's own coordinates; `rect` lives in the world. */
 export interface Platform {
   rect: Phaser.GameObjects.Rectangle;
   body: Phaser.Physics.Arcade.StaticBody;
   width: number;
   height: number;
+  x: number;
+  y: number;
   baseX: number;
   baseY: number;
-  motion?: 'lift';
-  phase: number;
-  amplitude: number;
   hidden?: boolean;
 }
 export interface Ramp {
@@ -47,6 +47,10 @@ export interface Ramp {
   x2: number;
   y2: number;
 }
+/**
+ * Devices work in their own zone's coordinates: start ground from 0, the device from LIP to END.
+ * The host places everything they create, and every position they report or receive, in the world.
+ */
 export interface DeviceHost {
   scene: Phaser.Scene;
   accent: number;
@@ -182,7 +186,7 @@ class Door {
     this.host.movePlatform(this.platform, this.x, this.y);
   }
   draw(g: Graphics): void {
-    const top = this.platform.rect.y - 360;
+    const top = this.platform.y - 360;
     g.lineStyle(2, INK, 0.7).strokeRect(this.x - 15, top, 30, 720);
     for (let i = 0; i < 16; i++)
       g.lineStyle(1, INK, 0.2).lineBetween(this.x - 15, top + i * 45, this.x + 15, top + 30 + i * 45);
@@ -903,9 +907,9 @@ class MirrorDevice extends Device {
     }
     if (this.bridge)
       g.lineStyle(8, this.accent, 0.8).lineBetween(
-        this.bridge.rect.x - this.bridge.width / 2,
+        this.bridge.x - this.bridge.width / 2,
         GY + 5,
-        this.bridge.rect.x + this.bridge.width / 2,
+        this.bridge.x + this.bridge.width / 2,
         GY + 5,
       );
     if (s.control === 'aim') {
@@ -1131,13 +1135,8 @@ class WaveDevice extends Device {
   }
   draw(g: Graphics): void {
     for (const p of [...this.near, ...this.far]) {
-      g.lineStyle(1, MUTED, 0.5).lineBetween(p.baseX, GY + 90, p.rect.x, p.rect.y);
-      g.lineStyle(2, this.far.includes(p) ? INK : this.accent, 0.8).lineBetween(
-        p.rect.x - 40,
-        p.rect.y - 6,
-        p.rect.x + 40,
-        p.rect.y - 6,
-      );
+      g.lineStyle(1, MUTED, 0.5).lineBetween(p.baseX, GY + 90, p.x, p.y);
+      g.lineStyle(2, this.far.includes(p) ? INK : this.accent, 0.8).lineBetween(p.x - 40, p.y - 6, p.x + 40, p.y - 6);
     }
     if (this.spec.mode === 'frequency') {
       // Count for `seconds`, then hold the result as long again. Whole cycles keep each window starting at rest.
@@ -1310,8 +1309,7 @@ class RopeDevice extends Device {
     g.fillStyle(this.accent, 0.9).fillCircle(LIP, this.rest - this.height(0, now) * M, 6);
     const period = this.length / this.speed + 1.5;
     this.clock.draw(g, this.driving ? now - this.started : this.pulse % period);
-    for (const p of this.stones)
-      g.lineStyle(2, this.accent, 0.85).lineBetween(p.rect.x - 30, p.rect.y - 6, p.rect.x + 30, p.rect.y - 6);
+    for (const p of this.stones) g.lineStyle(2, this.accent, 0.85).lineBetween(p.x - 30, p.y - 6, p.x + 30, p.y - 6);
   }
 }
 
@@ -1813,7 +1811,7 @@ class FoodChainDevice extends Device {
     this.hold += dt;
     if (this.hold < 0.4) return;
     if (this.success) {
-      this.host.burst(this.shaft, this.lift.rect.y, this.accent, 24);
+      this.host.burst(this.shaft, this.lift.y, this.accent, 24);
       this.win();
     } else {
       this.revert = 2;
@@ -1826,13 +1824,8 @@ class FoodChainDevice extends Device {
         `${['grass', 'rabbits', 'foxes'][level]}  ${fmt(chainEnergy(this.sunlight, this.spec.ratio, level))} kJ`,
       ),
     );
-    g.lineStyle(3, this.accent, 0.85).lineBetween(
-      this.shaft - 55,
-      this.lift.rect.y - 6,
-      this.shaft + 55,
-      this.lift.rect.y - 6,
-    );
-    g.lineStyle(1, MUTED, 0.6).lineBetween(this.shaft, this.lift.rect.y, this.shaft, GY + 20);
+    g.lineStyle(3, this.accent, 0.85).lineBetween(this.shaft - 55, this.lift.y - 6, this.shaft + 55, this.lift.y - 6);
+    g.lineStyle(1, MUTED, 0.6).lineBetween(this.shaft, this.lift.y, this.shaft, GY + 20);
   }
 }
 
