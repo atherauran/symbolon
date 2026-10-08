@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test src/math/evaluate.test.ts src/physics/model.test.ts",
+    "test": "node --import tsx --test src/math/evaluate.test.ts src/physics/model.test.ts src/rules/rules.test.ts",
     "format": "prettier --write ."
   },
   "dependencies": {
