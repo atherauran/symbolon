@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
-import { drawFigure, Formula, INK, text } from './art';
+import { Formula, INK, StickFigure, text } from './art';
 
 export class Backdrop extends Phaser.Scene {
   private art!: Phaser.GameObjects.Graphics;
   private formula!: Formula;
   private one!: Formula;
   private elapsed = 0;
+  private figure = new StickFigure();
   constructor() {
     super('Backdrop');
   }
@@ -51,23 +52,8 @@ export class Backdrop extends Phaser.Scene {
       .strokePath();
     g.lineStyle(1, INK, 0.24).lineBetween(698, 505, 1159, 505);
     g.lineStyle(1, INK, 0.05).lineBetween(698, 506, 1159, 506);
-    drawFigure(
-      g,
-      778,
-      423,
-      0xff962f,
-      {
-        time: t,
-        speed: 0,
-        grounded: false,
-        facing: 1,
-        held: true,
-        attack: 0,
-        hurt: false,
-        aim: -0.9 + Math.sin(t) * 0.04,
-      },
-      2.4,
-    );
+    this.figure.update(delta / 1000, { speed: 0, vy: 0, grounded: true, facing: 1, attack: 0 });
+    this.figure.draw(g, 778, 423, 0xff962f, { held: true, aim: -0.9 + Math.sin(t) * 0.04, hurt: false }, 2.4);
     this.one.setPosition(849 + Math.sin(t * 0.7) * 3, 353 + Math.cos(t * 0.9) * 5);
     this.formula.y = 289 + Math.sin(t * 0.8) * 9;
     g.lineStyle(1, 0xff962f, 0.22);

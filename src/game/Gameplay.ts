@@ -3,7 +3,7 @@ import { CAMPAIGN, CHAPTERS, unlockedThrough } from '../content/campaign';
 import { isOperator, notation, OPERATORS } from '../math/evaluate';
 import { judge } from '../physics/model';
 import { AudioEngine } from './audio';
-import { drawFigure, Dust, Formula, INK, MUTED, text } from './art';
+import { Dust, Formula, INK, MUTED, StickFigure, text } from './art';
 import { createDevice, HAZARD, type Device, type DeviceHost, type Platform, type Ramp } from './devices';
 import { compatible, Rack, Rail, Token } from './objects';
 import {
@@ -90,6 +90,7 @@ export class Gameplay extends Phaser.Scene {
   background!: Phaser.GameObjects.Graphics;
   geometry!: Phaser.GameObjects.Graphics;
   figures!: Phaser.GameObjects.Graphics;
+  figure!: StickFigure;
   overlay!: Phaser.GameObjects.Graphics;
   dust!: Dust;
   hint!: Phaser.GameObjects.Text;
@@ -197,6 +198,7 @@ export class Gameplay extends Phaser.Scene {
     this.background = this.add.graphics().setDepth(-10);
     this.geometry = this.add.graphics().setDepth(1);
     this.figures = this.add.graphics().setDepth(15);
+    this.figure = new StickFigure();
     this.overlay = this.add.graphics().setDepth(20);
     this.dust = new Dust(this.add.graphics().setDepth(30));
     this.drawBackdrop();
@@ -1264,17 +1266,20 @@ export class Gameplay extends Phaser.Scene {
         overlay.strokePath();
       }
     });
-    const grounded = this.playerBody.blocked.down || this.onRamp;
+    const grounded = this.playerBody.blocked.down || this.onRamp,
+      walled = this.vx < 0 ? this.playerBody.blocked.left : this.playerBody.blocked.right;
+    this.figure.update(dt, {
+      speed: walled ? 0 : this.vx,
+      vy: this.vy,
+      grounded,
+      facing: this.facing,
+      attack: this.attack,
+    });
     if (!this.dying || this.clock % 0.2 < 0.1)
-      drawFigure(fg, this.playerBody.center.x, this.playerBody.center.y, this.character.color, {
-        time: this.clock,
-        speed: this.vx,
-        grounded,
-        facing: this.facing,
+      this.figure.draw(fg, this.playerBody.center.x, this.playerBody.center.y, this.character.color, {
         held: Boolean(this.held),
-        attack: this.attack,
-        hurt: this.invulnerable > 0 && this.clock % 0.16 < 0.08,
         aim: this.aim(),
+        hurt: this.invulnerable > 0 && this.clock % 0.16 < 0.08,
       });
     if (grounded && Math.abs(this.vx) > 170 && Math.random() < dt * 12)
       this.dust.burst(this.player.x, this.player.y + 30, MUTED, 1, 30);
