@@ -319,120 +319,15 @@ nav {
   overflow: auto;
   pointer-events: auto;
 }
-.selection-main {
-  max-width: 1180px;
-  width: 100%;
-  margin: auto;
-  padding: 18px 0 30px;
-}
-.selection-main h2,
 .chapter-menu h2 {
   font-size: clamp(40px, 4.6vw, 66px);
   font-weight: 350;
   letter-spacing: -2px;
   margin: 17px 0 12px;
 }
-.selection-main h2 em,
 .chapter-menu h2 em {
   font-family: 'STIX Two Math', serif;
   font-weight: 400;
-}
-.selection-main > p {
-  font-size: 13px;
-  color: #a1aeb7;
-}
-.characters {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  margin-top: 35px;
-  gap: 12px;
-}
-.character {
-  border: 1px solid #ffffff12;
-  background: #10151988;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  text-align: left;
-  position: relative;
-  padding: 19px 19px 0;
-  transition:
-    background 0.2s,
-    border-color 0.2s;
-  min-height: 322px;
-  overflow: hidden;
-}
-.character:hover {
-  background: #171d22;
-}
-.character.selected {
-  border-color: var(--character);
-  background: linear-gradient(155deg, color-mix(in srgb, var(--character) 7%, #101519), #101519);
-}
-.character-index {
-  font-family: 'STIX Two Math', serif;
-  color: #8e9da8;
-  font-size: 12px;
-}
-.character-art {
-  height: 130px;
-  align-self: center;
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  margin: 0 0 14px;
-}
-.character-art svg {
-  height: 135px;
-  transition: transform 0.3s;
-  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--character) 12%, transparent));
-}
-.character:hover svg {
-  transform: translateY(-5px) rotate(-3deg);
-}
-.character-name {
-  font-size: 18px;
-  font-weight: 550;
-  color: var(--character);
-  margin-bottom: 9px;
-}
-.character-trait {
-  font-size: 12px;
-  color: #c0c8cd;
-  margin-bottom: 10px;
-  line-height: 1.5;
-  min-height: 30px;
-}
-.character-description {
-  color: #a1adb6;
-  font-size: 12px;
-  line-height: 1.7;
-  min-height: 55px;
-  margin-bottom: 15px;
-}
-.selection-indicator {
-  font-size: 10px;
-  letter-spacing: 2px;
-  display: block;
-  width: calc(100% + 38px);
-  margin: 0 -19px;
-  padding: 12px 19px;
-  border-top: 1px solid #ffffff0b;
-  color: #8c9ba6;
-}
-.selected .selection-indicator {
-  color: var(--character);
-  background: color-mix(in srgb, var(--character) 5%, transparent);
-}
-.selection-bottom {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 25px;
-}
-.selection-bottom > span {
-  font-size: 13px;
-  color: #98a7b2;
 }
 .hud {
   position: absolute;
@@ -489,21 +384,6 @@ nav {
   display: flex;
   align-items: center;
   gap: 15px;
-}
-.hearts {
-  display: flex;
-  gap: 7px;
-}
-.heart {
-  width: 7px;
-  height: 7px;
-  background: #e4e9e5;
-  border-radius: 50%;
-  display: block;
-  transition: background 0.2s;
-}
-.heart.empty {
-  background: #313a40;
 }
 .focus-track {
   height: 2px;
@@ -859,18 +739,6 @@ kbd {
   header {
     height: 88px;
   }
-  .characters {
-    margin-top: 22px;
-  }
-  .character {
-    min-height: 290px;
-  }
-  .character-art {
-    height: 100px;
-  }
-  .character-art svg {
-    height: 110px;
-  }
 }
 @media (max-width: 1000px) {
   .title-screen,
@@ -897,31 +765,8 @@ kbd {
   .chapter-symbol {
     display: none;
   }
-  .characters {
-    gap: 7px;
-  }
-  .character {
-    padding: 13px 12px 0;
-  }
-  .character-description {
-    font-size: 11px;
-  }
-  .selection-indicator {
-    width: calc(100% + 24px);
-    margin: 0 -12px;
-    padding-left: 12px;
-  }
-  .character-trait {
-    font-size: 11px;
-  }
   nav {
     gap: 18px;
-  }
-  .selection-main {
-    padding-top: 0;
-  }
-  .selection-main h2 {
-    font-size: 42px;
   }
 }
 @media (max-width: 700px) {
@@ -975,21 +820,8 @@ kbd {
   header {
     height: 80px;
   }
-  .characters {
-    grid-template-columns: repeat(2, 1fr);
-  }
   .selection-screen {
     overflow: auto;
-  }
-  .character {
-    min-height: 280px;
-  }
-  .selection-bottom {
-    padding-bottom: 25px;
-    gap: 20px;
-  }
-  .selection-bottom > span {
-    font-size: 11px;
   }
   .hud-location {
     gap: 9px;

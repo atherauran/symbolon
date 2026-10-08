@@ -1,6 +1,6 @@
 # Symbolon
 
-A single-player browser action-puzzle game inspired by Alan Becker’s _Animation vs. Math_. Carry numbers and operators, evaluate equations, and drive real middle-school physics and biology to change the arena. Built with TypeScript, Phaser 3, Arcade Physics, and Vite; menus and overlays use HTML/CSS.
+A single-player browser action-puzzle game inspired by Alan Becker’s _Animation vs. Math_. A kid doing homework at night picks one of five pens, and the worksheet pulls them in. Carry numbers and operators, evaluate equations, repair walking falsehoods, and drive real middle-school physics and biology to change the world. Built with TypeScript, Phaser 3, Arcade Physics, and Vite; menus and overlays use HTML/CSS.
 
 ## Run locally
 
@@ -37,16 +37,18 @@ The build bundles its fonts and requires no remote services. Nothing is publishe
 
 Square slots hold numbers; round slots hold operators. Nothing is pre-filled: every operator is carried from a rack or found in the level, and 𝑥 can knock operators out of your rail. Some racks hold a fixed stock, one of each symbol shown. Aim at a slot to choose it. Without an explicit mouse target, a held symbol selects the first compatible empty slot. You must be near a rack or rail to manipulate it. Symbols thrown through empty compatible receivers also snap into place.
 
-The equals sign lights when an expression is mathematically valid. There are no hints: objectives say what to achieve, and the numbers a puzzle needs are in the scene (tiles, bricks, rulers, stopwatches, counters, labels). Enemies keep arriving until a zone is solved. Other supported results can still exert force or create different geometry. Boss counters must satisfy the current component and its operation, where applicable.
+The equals sign lights when an expression is mathematically valid. Hints only teach controls and retire once you have used them; objectives say what to achieve, and the numbers a puzzle needs are in the scene (tiles, bricks, rulers, stopwatches, counters, labels). Racks offer only what you know: the symbols of rails you have solved. A new symbol first turns up loose in the level, in a fixed stock, or from a repaired Falsehood.
 
-Holding symbols or editing equations slows combat until focus runs out. Focus recovers while your hands are empty and you are no longer editing. Orange has longer focus; Green has longer attack warnings and quantized throw aiming; Yellow sees result and trajectory previews; Blue moves and handles symbols faster; Red hits and throws harder.
+Falsehoods are false statements that walk, such as 1 + 1 = 3. A thrown number adds a term toward true but never past it, and a thrown ÷ halves how wrong one is; anything else bounces off. A true Falsehood dissolves and leaves a symbol behind. Strikes only push them back. They keep arriving until a zone is solved. Other supported results can still exert force or create different geometry. Boss counters must satisfy the current component and its operation, where applicable.
+
+Focus is your health. Holding symbols or editing equations slows combat until focus runs out, and every hit costs a second of it; at zero you return to the checkpoint. Focus recovers while your hands are empty and you are no longer editing, and every concept you learn (a symbol or a law) lengthens it. Orange has longer focus; Green has longer attack warnings and quantized throw aiming; Yellow sees result and trajectory previews; Blue moves and handles symbols faster; Red hits and throws harder.
 
 ## Campaign
 
-The campaign targets Chinese 初中 (middle school) mathematics, physics, and biology. Later challenge comes from multi-step reasoning, reading instruments, fetching operators under fire, and knowledge from other subjects, not from advanced math. The world is one continuous scene: six chapter regions laid end to end along a rightward path, each made of zones. A zone's gate opens once its rail works, and crossing into the next zone makes it the checkpoint. The regions hold 21 encounters, including three battles against 𝑥, the Unknown, whose phases have individual checkpoints.
+The campaign targets Chinese 初中 (middle school) mathematics, physics, and biology. Later challenge comes from multi-step reasoning, reading instruments, fetching operators under fire, and knowledge from other subjects, not from advanced math. The world is one continuous scene: six chapter regions laid end to end along a rightward path, each made of zones. A zone's gate opens once its rail works, and crossing into the next zone makes it the checkpoint. The regions hold 21 encounters, including four battles against 𝑥, the Unknown, whose phases have individual checkpoints. The five pens of the prologue are the five characters.
 
-1. **One Becomes Many:** carrying symbols, cell division (1 → 2 → 4 → 8), counting brick courses with a limited stock, measuring with a ruler, microscope magnification (eyepiece × objective), and a launch pad under fire.
-2. **Below Zero:** a ruler that doesn't start at 0, the microscope's inverted image (negative shifts), energy through a food chain, uniform motion with signed velocity and fractions, bacteria doubling on a clock (powers), square roots, and the first duel (linear equations and a meeting problem).
+1. **One Becomes Many:** carrying symbols, cell division (1 → 2 → 4 → 8), counting brick courses with a limited stock, measuring with a ruler, microscope magnification (eyepiece × objective), a launch pad under fire, and a first duel with 𝑥.
+2. **Below Zero:** a ruler that doesn't start at 0, the microscope's inverted image (negative shifts), energy through a food chain, uniform motion with signed velocity and fractions, bacteria doubling on a clock (powers), square roots, and a second duel (linear equations and a meeting problem).
 3. **Balance:** equal-arm balances, levers (F₁L₁ = F₂L₂), and weight (G = mg, g = 10 N/kg).
 4. **Line of Sight:** the law of reflection, the Pythagorean theorem as areas, convex lenses (u = 2f, and f < u < 2f for an enlarged image), and a duel on the coordinate grid (y = kx + b).
 5. **Waves:** frequency, oscilloscope waveforms (loudness and pitch), heart rate in beats per minute, and wave speed (v = λf).
@@ -61,7 +63,8 @@ Progress and settings are stored locally in the browser. Continue returns to the
 - `src/physics/model.ts` holds the physics laws and `judge()`, which decides every rail's outcome. It has no Phaser dependencies.
 - `src/rules/` holds the chemistry (`chem.ts`), biology (`bio.ts`), and Falsehood (`lies.ts`) rules. They have no Phaser dependencies.
 - `src/game/devices.ts` animates the physics and biology devices (levers, lenses, microscopes, cell cultures, food chains, hearts) and measuring instruments (rulers, protractors, stopwatches, counters). `src/game/objects.ts` implements tokens, typed rail slots, and racks. `World.ts` builds zones as the player approaches and unloads them behind the checkpoint, and runs movement, combat, math devices, bosses, and operator theft. Devices work in their own zone's coordinates; the World places what they create.
-- `src/main.ts` owns HTML overlays, character selection, local saves, and scene transitions.
+- `src/game/Prologue.ts` is the opening: the night desk, the pen pick, and the worksheet pulling the kid in.
+- `src/main.ts` owns HTML overlays, local saves, and scene transitions.
 
 Every rail lists a canonical `solution`. Its slots are derived from that solution, and the tests check that each solution uses tokens available at that point and passes `judge()`. Devices must follow one rule: each device simulates a textbook 初中 law exactly, in real units (1 m = 80 px, world seconds), and fails in the physically correct way. The numbers a puzzle needs come from instruments in the scene, not from rail labels. Math devices (the first bridge, launch pads) carry no physical law beyond their stated geometry.
 

@@ -3,6 +3,7 @@ import '@fontsource/stix-two-math';
 import '@fontsource-variable/manrope';
 import './style.css';
 import { Backdrop } from './game/Backdrop';
+import { Prologue } from './game/Prologue';
 import { World } from './game/World';
 import { AudioEngine } from './game/audio';
 import { REGIONS, knownBefore } from './content/campaign';
@@ -30,6 +31,7 @@ function migrate(save: CheckpointState | { version: 3; encounter: number; furthe
     zone: 0,
     furthest: V3_CHAPTERS[save.furthest] - 1,
     known: knownBefore(region, 0),
+    taught: [],
   } as CheckpointState;
 }
 let saved = migrate(read(SAVE_KEY));
@@ -68,14 +70,10 @@ const game = new Phaser.Game({
     default: 'arcade',
     arcade: { gravity: { x: 0, y: 0 }, debug: false, fixedStep: false, customUpdate: true },
   },
-  scene: [Backdrop, World],
+  scene: [Backdrop, Prologue, World],
   render: { transparent: false, powerPreference: 'high-performance' },
 });
 
-function figure(color: string, variant = 0): string {
-  const arm = variant === 4 ? 'M51 49 70 58 84 49' : variant === 2 ? 'M51 49 64 38 75 33' : 'M51 49 67 57 77 47';
-  return `<svg viewBox="0 0 110 150" fill="none" aria-hidden="true"><g stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="55" cy="26" r="12"/><path d="M54 39 47 85 29 126M47 85 71 125M52 50 33 65 28 83${arm}"/></g></svg>`;
-}
 function brand(): string {
   return '<a class="brand" href="#" data-action="title" aria-label="Symbolon home"><span class="brand-mark">s<span>n</span></span><span>SYMBOLON</span></a>';
 }
@@ -92,19 +90,31 @@ function title(): void {
     <main class="title-main">
       <h1><span class="math">Symbolon<span class="period">.</span></span></h1>
       <p class="lead">The world is an equation.<br>Be the unexpected variable.</p>
-      <div class="title-actions"><button class="primary" data-action="${saved && !saved.complete ? 'continue' : 'choose'}">${saved && !saved.complete ? 'Continue your journey' : 'Enter the equation'}<span>↗</span></button>${saved && !saved.complete ? '<button class="secondary" data-action="choose">New journey</button>' : ''}</div>
+      <div class="title-actions"><button class="primary" data-action="${saved && !saved.complete ? 'continue' : 'prologue'}">${saved && !saved.complete ? 'Continue your journey' : 'Enter the equation'}<span>↗</span></button>${saved && !saved.complete ? '<button class="secondary" data-action="prologue">New journey</button>' : ''}</div>
       <div class="game-meta"><span>SINGLE PLAYER</span><i></i><span>SIX CHAPTERS</span><i></i><span>KEYBOARD + MOUSE</span></div>
     </main>
     <footer class="chapter-strip">${REGIONS.map((chapter, i) => `<button class="chapter-link ${i === 0 ? 'available' : ''}" data-action="chapters"><span class="chapter-number">0${i + 1}</span><span>${chapter.title}</span><span class="chapter-symbol">${chapter.symbol}</span></button>`).join('')}</footer>
   </div>`;
 }
-function choose(): void {
-  screen = 'choose';
-  root.innerHTML = `<div class="selection-screen"><header>${brand()}<button class="text-button" data-action="title">← BACK</button></header>
-    <main class="selection-main"><div class="eyebrow">EVERY VARIABLE HAS POTENTIAL</div><h2>Who will you <em>be?</em></h2><p>Five ways to move through the same impossible world.</p>
-      <div class="characters">${CHARACTERS.map((c, i) => `<button class="character ${c.id === selected ? 'selected' : ''}" data-character="${c.id}" style="--character:${c.hex}" aria-pressed="${c.id === selected}"><span class="character-index">0${i + 1}</span><div class="character-art">${figure(c.hex, i)}</div><span class="character-name">${c.name}</span><span class="character-trait">${c.trait}</span><span class="character-description">${c.description}</span><span class="selection-indicator">${c.id === selected ? 'SELECTED' : 'CHOOSE'}</span></button>`).join('')}</div>
-      <div class="selection-bottom"><span>Same journey. Your own approach.</span><button class="primary" data-action="start">Let’s begin<span>→</span></button></div>
-    </main></div>`;
+/** The prologue's pen pick chooses the character. */
+function prologue(): void {
+  screen = 'prologue';
+  clearTimeout(toastTimer);
+  root.innerHTML = '';
+  game.scene.stop('World');
+  game.scene.sleep('Backdrop');
+  game.scene.start('Prologue', {
+    reducedMotion: settings.reducedMotion,
+    cancel: () => {
+      game.scene.stop('Prologue');
+      title();
+    },
+    done: (character: CharacterId) => {
+      selected = character;
+      game.scene.stop('Prologue');
+      launch(newSave(), true);
+    },
+  });
 }
 function newSave(region = 0): CheckpointState {
   return {
@@ -114,21 +124,29 @@ function newSave(region = 0): CheckpointState {
     zone: 0,
     furthest: saved?.furthest ?? 0,
     known: knownBefore(region, 0),
+    taught: saved?.taught ?? [],
     complete: false,
     elapsed: 0,
   };
 }
-function launch(save: CheckpointState): void {
+function launch(save: CheckpointState, fromPrologue = false): void {
   audio.start();
   saved = { ...save };
   persist(SAVE_KEY, saved);
   showHud();
   game.scene.sleep('Backdrop');
-  game.scene.start('World', { save: saved, settings, audio, emit: onEvent, chapterCard: save.zone === 0 });
+  game.scene.start('World', {
+    save: saved,
+    settings,
+    audio,
+    emit: onEvent,
+    chapterCard: save.zone === 0,
+    fromPrologue,
+  });
 }
 function showHud(): void {
   screen = 'playing';
-  root.innerHTML = `<div class="hud"><div class="hud-top"><div class="hud-location"><span id="hud-chapter">CHAPTER I</span><span id="hud-title"></span></div><div class="hud-right"><span id="hud-phase"></span><button class="pause-button" data-action="pause" aria-label="Pause game">Ⅱ</button></div></div><div class="hud-bottom"><div class="vitals"><div id="hearts" class="hearts"></div><div class="focus-track" title="Equation focus"><div id="focus-fill"></div></div><span class="focus-label">FOCUS</span></div><div class="hud-shortcuts"><span>R <small>restart</small></span></div></div><div class="objective"><span id="objective-text"></span></div><div class="progress-track"><div id="campaign-progress"></div></div></div><div id="toast" class="toast" role="status"></div><div id="chapter-card" class="chapter-card"></div><div id="modal-host"></div>`;
+  root.innerHTML = `<div class="hud"><div class="hud-top"><div class="hud-location"><span id="hud-chapter">CHAPTER I</span><span id="hud-title"></span></div><div class="hud-right"><span id="hud-phase"></span><button class="pause-button" data-action="pause" aria-label="Pause game">Ⅱ</button></div></div><div class="hud-bottom"><div class="vitals"><div id="focus-track" class="focus-track"><div id="focus-fill"></div></div><span class="focus-label">FOCUS</span></div><div class="hud-shortcuts"><span>R <small>restart</small></span></div></div><div class="objective"><span id="objective-text"></span></div><div class="progress-track"><div id="campaign-progress"></div></div></div><div id="toast" class="toast" role="status"></div><div id="chapter-card" class="chapter-card"></div><div id="modal-host"></div>`;
   if (currentHud) renderHud(currentHud);
 }
 function renderHud(event: Extract<GameEvent, { type: 'hud' }>): void {
@@ -142,12 +160,9 @@ function renderHud(event: Extract<GameEvent, { type: 'hud' }>): void {
   set('hud-title', event.title);
   set('hud-phase', event.phase);
   set('objective-text', event.objective);
-  const hearts = document.getElementById('hearts');
-  if (hearts && hearts.dataset.hp !== String(event.hp)) {
-    hearts.dataset.hp = String(event.hp);
-    hearts.innerHTML = [0, 1, 2, 3].map((i) => `<span class="heart ${i >= event.hp ? 'empty' : ''}"></span>`).join('');
-    hearts.setAttribute('aria-label', `${event.hp} of 4 health`);
-  }
+  // Focus is health; its bar lengthens as the known set grows.
+  const track = document.getElementById('focus-track');
+  if (track) track.style.width = `${Math.round(event.maxFocus * 14)}px`;
   const fill = document.getElementById('focus-fill');
   if (fill) {
     fill.style.width = `${(event.focus / event.maxFocus) * 100}%`;
@@ -212,7 +227,7 @@ function controls(): void {
   ]
     .map(([key, label]) => `<kbd>${key}</kbd><span>${label}</span>`)
     .join('');
-  const markup = `<div class="modal-scrim controls-scrim"><section class="controls-panel"><div class="eyebrow">A FEW SIMPLE RULES</div><h2>Think with<br><em>your hands.</em></h2><div class="control-grid">${rows}</div><p class="control-note">Square slots hold numbers; round slots hold operators. Aim at a slot to choose it. The equals sign lights when the expression is valid. Hold a symbol to slow combat while focus lasts.</p><button class="primary" data-action="close-controls">Got it<span>→</span></button></section></div>`;
+  const markup = `<div class="modal-scrim controls-scrim"><section class="controls-panel"><div class="eyebrow">A FEW SIMPLE RULES</div><h2>Think with<br><em>your hands.</em></h2><div class="control-grid">${rows}</div><p class="control-note">Square slots hold numbers; round slots hold operators. Aim at a slot to choose it. The equals sign lights when the expression is valid. Holding a symbol slows combat while focus lasts. Hits cost focus, and running out returns you to the checkpoint. Every concept you learn lengthens it.</p><button class="primary" data-action="close-controls">Got it<span>→</span></button></section></div>`;
   root.insertAdjacentHTML('beforeend', markup);
   const close = () => {
     root.querySelector('.controls-scrim')?.remove();
@@ -235,22 +250,16 @@ function ending(elapsed: number): void {
 }
 
 root.addEventListener('click', (event) => {
-  const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action], [data-character], [data-replay]');
+  const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action], [data-replay]');
   if (!target) return;
   event.preventDefault();
-  if (target.dataset.character) {
-    selected = target.dataset.character as CharacterId;
-    choose();
-    return;
-  }
   if (target.dataset.replay !== undefined && !(target as HTMLButtonElement).disabled) {
     launch(newSave(Number(target.dataset.replay)));
     return;
   }
   const action = target.dataset.action;
   if (action === 'title') title();
-  else if (action === 'choose') choose();
-  else if (action === 'start') launch(newSave());
+  else if (action === 'prologue') prologue();
   else if (action === 'continue' && saved) launch(saved);
   else if (action === 'begin-chapter') {
     document.getElementById('chapter-card')?.classList.remove('visible');

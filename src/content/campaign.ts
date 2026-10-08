@@ -19,8 +19,10 @@ export interface Region {
   knowledge: string;
   numeral: string;
   symbol: string;
-  /** The kind of Falsehood that walks this region. */
+  /** The kind of Falsehood that walks this region, and how often one is large or huge. */
   lie: LieKind;
+  large: number;
+  huge: number;
   zones: Zone[];
 }
 /** Zone widths in world pixels: a device zone spans start ground + device; a duel arena is one screen. */
@@ -31,6 +33,8 @@ const CHAPTERS: Omit<Region, 'zones'>[] = [
   {
     title: 'One Becomes Many',
     lie: 'math',
+    large: 0,
+    huge: 0,
     subtitle: 'Every possibility starts with one.',
     knowledge:
       'Use whole numbers and basic operations. You will also work with measurement, magnification, and cell division.',
@@ -40,6 +44,8 @@ const CHAPTERS: Omit<Region, 'zones'>[] = [
   {
     title: 'Below Zero',
     lie: 'math',
+    large: 0.2,
+    huge: 0,
     subtitle: 'There is something on the other side.',
     knowledge:
       'Work with negative numbers, fractions, powers, and square roots. Apply signed speed and solve linear equations.',
@@ -49,6 +55,8 @@ const CHAPTERS: Omit<Region, 'zones'>[] = [
   {
     title: 'Balance',
     lie: 'force',
+    large: 0.25,
+    huge: 0,
     subtitle: 'Whatever you do to one side…',
     knowledge: 'Use equal-arm balances and lever moments. Convert mass to weight with G = mg.',
     numeral: 'III',
@@ -57,6 +65,8 @@ const CHAPTERS: Omit<Region, 'zones'>[] = [
   {
     title: 'Line of Sight',
     lie: 'math',
+    large: 0.3,
+    huge: 0.05,
     subtitle: 'Light always keeps its angle.',
     knowledge: 'Use reflection, the Pythagorean theorem, convex lenses, and straight-line equations.',
     numeral: 'IV',
@@ -65,6 +75,8 @@ const CHAPTERS: Omit<Region, 'zones'>[] = [
   {
     title: 'Waves',
     lie: 'math',
+    large: 0.3,
+    huge: 0.1,
     subtitle: 'Everything that moves has a rhythm.',
     knowledge: 'Read amplitude and frequency, then apply them to sound, heart rate, and wave speed.',
     numeral: 'V',
@@ -73,6 +85,8 @@ const CHAPTERS: Omit<Region, 'zones'>[] = [
   {
     title: 'The Unknown',
     lie: 'math',
+    large: 0.35,
+    huge: 0.15,
     subtitle: 'Every unknown has a value.',
     knowledge: 'Combine cell division, levers, timing, reflection, and frequency, then solve a quadratic equation.',
     numeral: 'VI',
@@ -151,7 +165,7 @@ const ENCOUNTERS: Draft[][] = [
       'Grow a bridge of cells that fills the gap.',
       rail('Divisions', ['1', '+', '2']),
       { kind: 'division', cells: 8, size: 0.75 },
-      { enemies: 1, enemyTokens: ['2'], intro: 'A cell divides into two.' },
+      { enemies: 1, enemyTokens: ['2'], intro: 'A cell divides into two.', law: 'cell division' },
     ),
     device(
       'A taller wall',
@@ -167,14 +181,14 @@ const ENCOUNTERS: Draft[][] = [
       'Bridge the gap exactly.',
       rail('Bridge length · m', ['2', '+', '2'], { units: 'm' }),
       { kind: 'measure', gap: 4, start: 0 },
-      { intro: 'Lengths are measured in meters.', enemies: 2, enemyTokens: ['4', '+'] },
+      { intro: 'Lengths are measured in meters.', law: 'length', enemies: 2, enemyTokens: ['4', '+'] },
     ),
     device(
       'Under the lens',
       'Make the cell’s image fit the lock exactly.',
       rail('Magnification · eyepiece × objective', ['5', '*', '10']),
       { kind: 'microscope', mode: 'zoom', specimen: 0.1, gate: 5 },
-      { enemies: 2, enemyTokens: ['5', '10'], hazard: 'bolts' },
+      { enemies: 2, enemyTokens: ['5', '10'], hazard: 'bolts', law: 'magnification' },
     ),
   ]),
   puzzle(1, 'Applied mathematics', 'Put some force behind the idea.', [
@@ -184,6 +198,38 @@ const ENCOUNTERS: Draft[][] = [
       rail('Launch height · m', ['2', '*', '3'], { units: 'm' }),
       { kind: 'launch', height: 6 },
       { enemies: 3, enemyTokens: ['3', '+', '2'], hazard: 'bolts', noOperatorRack: true, loose: [['*', 60, 590]] },
+    ),
+  ]),
+  duel(1, 'The Unknown', 'It has been watching from the margins.', [
+    phase(
+      'Eight cells',
+      '𝑥',
+      'DIVIDE',
+      'Split your counter into one shard for every shield cell.',
+      rail('Divisions', ['1', '+', '2']),
+      'bolts',
+      2,
+      { device: { kind: 'division', cells: 8, size: 0.5 } },
+    ),
+    phase(
+      'Twice the unknown',
+      '𝑥 + 𝑥 = 6',
+      'DOUBLE',
+      'Find 𝑥. Its value breaks the armour.',
+      rail('𝑥 =', ['1', '+', '2'], { effect: 'solve', substitute: 'x+x', target: 6 }),
+      'bolts',
+      2,
+      { intro: '𝑥 stands for a number nobody has found yet.', law: 'unknowns' },
+    ),
+    phase(
+      'Ten times over',
+      '2 × 𝑥 = 10',
+      'MULTIPLY',
+      'Find 𝑥. Guard your operators.',
+      rail('𝑥 =', ['2', '+', '3'], { effect: 'solve', substitute: '2*x', target: 10 }),
+      'bolts',
+      2,
+      { theft: true },
     ),
   ]),
   // Chapter II — Below Zero
@@ -200,7 +246,7 @@ const ENCOUNTERS: Draft[][] = [
       'Bring the cell to the centre of the view.',
       rail('Slide shift · mm, rightward +', ['0', '-', '3'], { units: 'mm' }),
       { kind: 'microscope', mode: 'center', offset: -3 },
-      { enemies: 2, enemyTokens: ['3', '0'], hazard: 'negative' },
+      { enemies: 2, enemyTokens: ['3', '0'], hazard: 'negative', law: 'inverted images' },
     ),
   ]),
   puzzle(2, 'Food chain', 'Energy thins out on the way up.', [
@@ -211,6 +257,7 @@ const ENCOUNTERS: Draft[][] = [
       { kind: 'foodchain', demo: 25, ratio: 0.2, ledge: 4 },
       {
         intro: 'Energy passes up a food chain, but most of it is lost at every step.',
+        law: 'food chain energy',
         enemies: 2,
         enemyTokens: ['5', '*'],
         loose: [['4', 860, 590]],
@@ -224,7 +271,14 @@ const ENCOUNTERS: Draft[][] = [
       'Send the cart so it arrives as the bar levels.',
       rail('Cart speed · m/s', ['8', '/', '4'], { units: 'm/s' }),
       { kind: 'cart', distance: 8, time: 4 },
-      { intro: 'speed = distance ÷ time', enemies: 1, enemyTokens: ['8'], hazard: 'vectors', loose: [['/', 860, 590]] },
+      {
+        intro: 'speed = distance ÷ time',
+        law: 'speed',
+        enemies: 1,
+        enemyTokens: ['8'],
+        hazard: 'vectors',
+        loose: [['/', 860, 590]],
+      },
     ),
     device(
       'Late ferry',
@@ -246,6 +300,7 @@ const ENCOUNTERS: Draft[][] = [
         hazard: 'negative',
         theft: true,
         intro: 'A power repeats multiplication: 2⁴ = 2 × 2 × 2 × 2.',
+        law: 'powers',
       },
     ),
     device(
@@ -253,10 +308,10 @@ const ENCOUNTERS: Draft[][] = [
       'Reach the top of the wall.',
       rail('Steps', ['√', '9']),
       { kind: 'stairs', height: 3, bricks: true },
-      { enemies: 3, enemyTokens: ['9', '√'], hazard: 'negative', theft: true },
+      { enemies: 3, enemyTokens: ['9', '√'], hazard: 'negative', theft: true, law: 'square roots' },
     ),
   ]),
-  duel(2, 'The Unknown', '𝑥 has a value of its own.', [
+  duel(2, 'The Unknown returns', '𝑥 has a value of its own.', [
     phase(
       'An unknown value',
       '𝑥 + 5 = 2',
@@ -265,7 +320,7 @@ const ENCOUNTERS: Draft[][] = [
       rail('𝑥 =', ['2', '-', '5'], { effect: 'solve', substitute: 'x+5', target: 2 }),
       'negative',
       2,
-      { intro: 'Whatever you do to one side, do to the other.' },
+      { intro: 'Whatever you do to one side, do to the other.', law: 'linear equations' },
     ),
     phase(
       'Three of a kind',
@@ -308,7 +363,7 @@ const ENCOUNTERS: Draft[][] = [
         control: 'force',
         controlArm: 3,
       },
-      { intro: 'An equal-arm balance compares masses.', enemies: 2, enemyTokens: ['7', '3'] },
+      { intro: 'An equal-arm balance compares masses.', law: 'equal-arm balance', enemies: 2, enemyTokens: ['7', '3'] },
     ),
     device(
       'Identical crates',
@@ -334,14 +389,26 @@ const ENCOUNTERS: Draft[][] = [
       'Choose where your 6 N weight hangs.',
       rail('Hook distance · m', ['8', '-', '4'], { units: 'm' }),
       { kind: 'lever', arms: [3, 5], loads: [{ side: -1, arm: 3, force: 8 }], control: 'arm', controlForce: 6 },
-      { intro: 'Lever balance: F₁ × L₁ = F₂ × L₂', enemies: 2, enemyTokens: ['8', '4'], hazard: 'bolts' },
+      {
+        intro: 'Lever balance: F₁ × L₁ = F₂ × L₂',
+        law: 'lever balance',
+        enemies: 2,
+        enemyTokens: ['8', '4'],
+        hazard: 'bolts',
+      },
     ),
     device(
       'Mass and weight',
       'This load is marked in kilograms. Level the lever.',
       rail('Hook weight · N', ['2', '*', '10', '/', '4'], { units: 'N' }),
       { kind: 'lever', arms: [2, 4], loads: [{ side: -1, arm: 1, mass: 2 }], control: 'force', controlArm: 4 },
-      { intro: 'Weight: G = mg, where g = 10 N/kg.', enemies: 2, enemyTokens: ['10', '*'], hazard: 'bolts' },
+      {
+        intro: 'Weight: G = mg, where g = 10 N/kg.',
+        law: 'weight',
+        enemies: 2,
+        enemyTokens: ['10', '*'],
+        hazard: 'bolts',
+      },
     ),
     device(
       'Two loads',
@@ -422,6 +489,7 @@ const ENCOUNTERS: Draft[][] = [
       },
       {
         intro: 'Law of reflection: the angle in equals the angle out.',
+        law: 'reflection',
         enemies: 2,
         enemyTokens: ['9', '5'],
         hazard: 'bolts',
@@ -467,6 +535,7 @@ const ENCOUNTERS: Draft[][] = [
       { kind: 'squares', run: 4, rise: 3 },
       {
         intro: 'The squares on the two short sides add up to the square on the long side.',
+        law: 'Pythagorean theorem',
         enemies: 2,
         enemyTokens: ['3', '4'],
         loose: [['^', 860, 590]],
@@ -487,7 +556,13 @@ const ENCOUNTERS: Draft[][] = [
       'Place the arrow so a sharp image lands on the screen.',
       rail('Object distance · m', ['2', '*', '2'], { units: 'm' }),
       { kind: 'lens', mode: 'same', focal: 2 },
-      { intro: 'A convex lens gathers sunlight at its focus.', enemies: 2, enemyTokens: ['2', '*'], hazard: 'bolts' },
+      {
+        intro: 'A convex lens gathers sunlight at its focus.',
+        law: 'convex lens',
+        enemies: 2,
+        enemyTokens: ['2', '*'],
+        hazard: 'bolts',
+      },
     ),
     device(
       'Larger than life',
@@ -545,14 +620,26 @@ const ENCOUNTERS: Draft[][] = [
       'Count the far platforms. Make the near ones vibrate in step.',
       rail('Frequency · Hz', ['6', '/', '4'], { units: 'Hz' }),
       { kind: 'wave', mode: 'frequency', ledge: 1, frequency: 0, cycles: 6, seconds: 4 },
-      { intro: '1 Hz is one vibration per second.', enemies: 2, enemyTokens: ['6', '4'], hazard: 'waves' },
+      {
+        intro: '1 Hz is one vibration per second.',
+        law: 'frequency',
+        enemies: 2,
+        enemyTokens: ['6', '4'],
+        hazard: 'waves',
+      },
     ),
     device(
       'Louder',
       'Match the sound lock’s waveform.',
       rail('Amplitude · divisions', ['9', '/', '3']),
       { kind: 'scope', mode: 'amplitude', amplitude: 3, frequency: 300 },
-      { intro: 'A larger amplitude is a louder sound.', enemies: 2, enemyTokens: ['9', '/'], hazard: 'bolts' },
+      {
+        intro: 'A larger amplitude is a louder sound.',
+        law: 'loudness',
+        enemies: 2,
+        enemyTokens: ['9', '/'],
+        hazard: 'bolts',
+      },
     ),
     device(
       'Higher',
@@ -561,6 +648,7 @@ const ENCOUNTERS: Draft[][] = [
       { kind: 'scope', mode: 'frequency', amplitude: 2, frequency: 400 },
       {
         intro: 'A higher frequency is a higher pitch.',
+        law: 'pitch',
         enemies: 3,
         enemyTokens: ['4', '10', '*'],
         hazard: 'waves',
@@ -574,7 +662,7 @@ const ENCOUNTERS: Draft[][] = [
       'Set the pacemaker to beat in step with the heart.',
       rail('Pacemaker · beats/min', ['8', '*', '9']),
       { kind: 'pulse', bpm: 72, window: 15 },
-      { enemies: 3, enemyTokens: ['9', '8', '*'], hazard: 'waves' },
+      { enemies: 3, enemyTokens: ['9', '8', '*'], hazard: 'waves', law: 'heart rate' },
     ),
   ]),
   puzzle(5, 'The rope', 'A wave carries its shape along.', [
@@ -583,7 +671,13 @@ const ENCOUNTERS: Draft[][] = [
       'Measure the rope’s wave speed. Shake it so every stone rises together.',
       rail('Frequency · Hz', ['8', '/', '4'], { units: 'Hz' }),
       { kind: 'rope', distance: 8, seconds: 2, spacing: 2 },
-      { intro: 'wave speed = wavelength × frequency', enemies: 2, enemyTokens: ['8', '4'], hazard: 'vectors' },
+      {
+        intro: 'wave speed = wavelength × frequency',
+        law: 'wave speed',
+        enemies: 2,
+        enemyTokens: ['8', '4'],
+        hazard: 'vectors',
+      },
     ),
   ]),
   puzzle(5, 'Loud and clear', 'Some things only open for the right note.', [
@@ -693,7 +787,7 @@ const ENCOUNTERS: Draft[][] = [
       rail('𝑥 =', ['1'], { effect: 'solve', substitute: 'x^2-2*x+1', target: 0 }),
       'vectors',
       1,
-      { intro: 'One last expression.' },
+      { intro: 'One last expression.', law: 'quadratic equations' },
     ),
   ]),
 ];
@@ -719,13 +813,14 @@ export const zoneOrder = (region: number, zone: number) =>
   ALL_ZONES.findIndex((entry) => entry.region === region && entry.index === zone);
 
 /**
- * The known set at a checkpoint: every token of every rail solved before it. Racks only offer known tokens;
- * new ones are found loose in the world or dropped by Falsehoods.
+ * The known set at a checkpoint: every token and law of every rail solved before it. Racks only offer known
+ * tokens; new ones are found loose in the world or dropped by Falsehoods. Each concept lengthens focus.
  */
 export function knownBefore(region: number, zone: number): string[] {
   const known = new Set<string>();
-  ALL_ZONES.slice(0, zoneOrder(region, zone)).forEach(({ zone }) =>
-    zone.beat.rail.solution.forEach((t) => known.add(t)),
-  );
+  for (const { zone: done } of ALL_ZONES.slice(0, zoneOrder(region, zone))) {
+    done.beat.rail.solution.forEach((t) => known.add(t));
+    if (done.beat.law) known.add(done.beat.law);
+  }
   return [...known];
 }

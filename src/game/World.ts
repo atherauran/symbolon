@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ALL_ZONES, REGIONS, ZONE_COUNT, zoneOrder, type Zone } from '../content/campaign';
-import { isOperator, notation, OPERATORS } from '../math/evaluate';
+import { evaluate, isOperator, notation, OPERATORS } from '../math/evaluate';
+import { isTrue, lieText, makeLie, repair, sizeOf, type Lie, type Thrown } from '../rules/lies';
 import { GY, judge } from '../physics/model';
 import { AudioEngine } from './audio';
 import { Dust, Formula, INK, MUTED, StickFigure, text } from './art';
@@ -22,15 +23,19 @@ export interface RuntimeArgs {
   audio: AudioEngine;
   emit: (event: GameEvent) => void;
   chapterCard?: boolean;
+  /** Arriving from the prologue: the world fades in from the white of the page. */
+  fromPrologue?: boolean;
 }
+/** A Falsehood: a false statement that walks. Throws that move it toward true repair it. */
 interface Enemy {
   rect: Phaser.GameObjects.Rectangle;
   body: Phaser.Physics.Arcade.Body;
-  glyph: Formula;
-  hp: number;
+  label: Phaser.GameObjects.Text;
+  lie: Lie;
   time: number;
   stun: number;
-  kind: 'cluster' | 'operator';
+  /** Counts down once it is true; it dissolves into its token at zero. */
+  resolved: number;
   token: string;
   colliders: Phaser.Physics.Arcade.Collider[];
 }
@@ -92,6 +97,15 @@ interface LiveZone {
 const RAIL_X = 655,
   RAIL_Y = 536,
   GATE_TOP = -420;
+/** Knowledge replaces health: each known concept adds focus, up to a cap. A hit costs one second of it. */
+const FOCUS_PER_CONCEPT = 0.2,
+  FOCUS_BONUS_CAP = 4,
+  HIT_COST = 1;
+/** Uses before a control's hint retires. */
+const TEACH_USES = 3;
+const LIE_SIZE = { small: 24, large: 30, huge: 36 };
+/** Tokens a rack can offer; laws in the known set are not symbols. */
+const isSymbol = (t: string) => isOperator(t) || evaluate(t).valid;
 
 /**
  * A view of the scene whose factory puts every new game object into `layer`. Devices keep their own coordinates
@@ -143,7 +157,6 @@ export class World extends Phaser.Scene {
   leftBound = 0;
   clock = 0;
   worldClock = 0;
-  hp = 4;
   focus = 4;
   invulnerable = 0;
   attack = 0;
@@ -171,6 +184,8 @@ export class World extends Phaser.Scene {
   private reinforceTimer = 0;
   private launchVy = 0;
   private spawned = 0;
+  private uses = new Map<string, number>();
+  private moving = 0;
 
   constructor() {
     super('World');
@@ -193,6 +208,25 @@ export class World extends Phaser.Scene {
   }
   get chapter(): number {
     return this.cur.region + 1;
+  }
+  get maxFocus(): number {
+    return this.character.focus + Math.min(FOCUS_BONUS_CAP, this.known.size * FOCUS_PER_CONCEPT);
+  }
+  /** Counts a control's use; its hint retires after a few. */
+  private teach(control: string): void {
+    const n = (this.uses.get(control) ?? 0) + 1;
+    this.uses.set(control, n);
+    if (n >= TEACH_USES && !this.save.taught.includes(control)) {
+      this.save.taught.push(control);
+      this.commitSave();
+    }
+  }
+  /** The hint line: control reminders the player has not yet learned. */
+  private hintFor(parts: [string, string][]): string {
+    return parts
+      .filter(([control]) => !this.save.taught.includes(control))
+      .map(([, words]) => words)
+      .join('     ·     ');
   }
 
   create(): void {
@@ -225,8 +259,8 @@ export class World extends Phaser.Scene {
       this.spawned =
         0;
     this.facing = 1;
-    this.hp = 4;
-    this.focus = this.character.focus;
+    this.uses.clear();
+    this.focus = this.maxFocus;
     this.pauseDebounce = 0.25;
     this.dying = this.transition = this.meleeQueue = false;
     this.physics.world.setBounds(-1000, -800, 1e6, 2000);
@@ -270,7 +304,8 @@ export class World extends Phaser.Scene {
       this.cycleRack(dy > 0 ? 1 : -1),
     );
     this.hint = text(this, 640, 663, '', 12, '#c4ccd0', false).setScrollFactor(0).setDepth(60);
-    if (!this.args.settings.reducedMotion) {
+    if (this.args.fromPrologue) camera.fadeIn(1800, 250, 251, 255);
+    else if (!this.args.settings.reducedMotion) {
       camera.setZoom(this.phase ? 0.94 : 1.04);
       this.tweens.add({ targets: camera, zoom: 1, duration: 1900, ease: 'Sine.easeInOut' });
     }
@@ -406,7 +441,7 @@ export class World extends Phaser.Scene {
     const beat = live.zone.beat,
       { stock } = beat,
       loose = (beat.loose ?? []).map(([source]) => source);
-    const available = stock ?? [...this.known].filter((t) => !loose.includes(t));
+    const available = stock ?? [...this.known].filter((t) => isSymbol(t) && !loose.includes(t));
     const groups: [string, string[]][] = [
       ['numbers', available.filter((t) => !isOperator(t)).sort((a, b) => Number(a) - Number(b))],
       [
@@ -566,35 +601,43 @@ export class World extends Phaser.Scene {
     if (this.held === token) this.held = null;
   }
   private spawnEnemy(x: number, y: number): void {
-    const index = this.spawned++;
-    const rect = this.add.rectangle(x, y, 37, 38, 0xffffff, 0);
+    const index = this.spawned++,
+      region = REGIONS[this.cur.region];
+    // The first Falsehood of each kind is always the same, so it can be learned.
+    const firstZone = ALL_ZONES.find((z) => z.zone.beat.enemies && REGIONS[z.region].lie === region.lie)?.zone;
+    const roll = Math.random();
+    const lie = makeLie(region.lie, Math.random, {
+      first: index === 0 && firstZone === this.cur.zone,
+      size: roll < region.huge ? 'huge' : roll < region.huge + region.large ? 'large' : 'small',
+    });
+    const label = text(this, x, y, lieText(lie), LIE_SIZE[sizeOf(lie)], '#efb7a4').setDepth(9);
+    const rect = this.add.rectangle(x, y, label.width + 8, 38, 0xffffff, 0);
     this.physics.add.existing(rect);
     const body = rect.body as Phaser.Physics.Arcade.Body;
     body.setGravityY(1100).setBounce(0.1, 0).setMaxVelocity(650, 1000);
-    const choices = this.beat.enemyTokens ?? ['1', '+'],
-      token = choices[index % choices.length];
+    const choices = this.beat.enemyTokens ?? ['1'];
     const enemy: Enemy = {
       rect,
       body,
-      glyph: new Formula(this, x, y, token, 38, '#d6d9d7'),
-      hp: 2,
+      label,
+      lie,
       time: index,
       stun: 0,
-      kind: isOperator(token) ? 'operator' : 'cluster',
-      token,
+      resolved: 0,
+      token: choices[index % choices.length],
       colliders: [],
     };
     enemy.colliders.push(
       this.physics.add.collider(rect, this.ground),
       this.physics.add.overlap(this.player, rect, () => {
-        if (enemy.stun <= 0) this.damage(enemy.rect.x);
+        if (enemy.stun <= 0 && !enemy.resolved) this.damage(enemy.rect.x);
       }),
     );
     this.enemies.push(enemy);
   }
   private removeEnemy(enemy: Enemy): void {
     enemy.colliders.forEach((c) => c.destroy());
-    enemy.glyph.destroy();
+    enemy.label.destroy();
     enemy.rect.destroy();
     this.enemies = this.enemies.filter((e) => e !== enemy);
   }
@@ -650,6 +693,7 @@ export class World extends Phaser.Scene {
     if (rack) {
       rack.cycle(direction);
       this.args.audio.play('grab');
+      this.teach('choose');
     }
   }
   private selectedSlot(): number {
@@ -694,6 +738,7 @@ export class World extends Phaser.Scene {
         }
         this.editTimer = 0.8;
         this.args.audio.play('grab');
+        this.teach('place');
         return;
       }
       const source = this.rail.remove(slot);
@@ -719,6 +764,7 @@ export class World extends Phaser.Scene {
       nearest.hold();
       this.held = nearest;
       this.args.audio.play('grab');
+      this.teach('take');
       return;
     }
     const rack = this.nearbyRack();
@@ -726,6 +772,7 @@ export class World extends Phaser.Scene {
       this.held = this.spawnToken(rack.take(), this.player.x, this.player.y);
       this.held.hold();
       this.args.audio.play('grab');
+      this.teach('take');
       // Stocked tokens are the only copies, so they return to the rack instead of expiring.
       if (rack.limited) this.held.home = [rack.x, rack.y - 40];
     }
@@ -747,6 +794,7 @@ export class World extends Phaser.Scene {
       this.held = null;
       this.handling = 0.24 / this.character.handling;
       this.args.audio.play('throw');
+      this.teach('throw');
     } else {
       if (this.attack > 0) return;
       this.attack = 0.28;
@@ -759,7 +807,7 @@ export class World extends Phaser.Scene {
           (enemy.rect.x - this.player.x) * this.facing > -10 &&
           (enemy.rect.x - this.player.x) * this.facing < 98
         )
-          this.hitEnemy(enemy, this.facing * (this.character.id === 'red' ? 600 : 400), 1);
+          this.knock(enemy, this.facing * (this.character.id === 'red' ? 600 : 400));
       for (const token of this.tokens)
         if (
           token.state !== 'held' &&
@@ -795,6 +843,7 @@ export class World extends Phaser.Scene {
       return;
     }
     if (!this.phase && this.cur.solved) return;
+    this.teach('evaluate');
     const value = result.value!,
       verdict = judge(this.beat, value),
       display = this.rail.display();
@@ -817,32 +866,42 @@ export class World extends Phaser.Scene {
     }
     this.args.audio.play('solve');
     this.rail.solved = true;
-    this.learn();
+    const learned = this.learn();
     if (this.phase) this.performCounter();
     else {
       this.materialize(true);
-      this.solveZone();
+      this.solveZone(learned);
     }
   }
 
   private onDeviceSuccess(): void {
     this.rail.solved = true;
-    this.learn();
+    const learned = this.learn();
     if (this.phase) this.performCounter(this.device!.origin());
-    else this.solveZone();
+    else this.solveZone(learned);
   }
 
   /** A working rail's tokens become known, so racks ahead offer them. */
-  private learn(): void {
-    const before = this.known.size;
-    [...this.rail.values, ...this.beat.rail.solution].forEach((t) => t && this.known.add(t));
-    if (this.known.size > before)
-      this.zones.filter((z) => !z.solved && z !== this.cur).forEach((z) => this.makeRacks(z));
+  private learn(): string[] {
+    const before = this.maxFocus,
+      fresh = [...this.rail.values, ...this.beat.rail.solution, this.beat.law].filter(
+        (t): t is string => Boolean(t) && !this.known.has(t!),
+      );
+    fresh.forEach((t) => this.known.add(t));
+    if (!fresh.length) return fresh;
+    this.focus += this.maxFocus - before;
+    this.zones.filter((z) => !z.solved && z !== this.cur).forEach((z) => this.makeRacks(z));
+    return [...new Set(fresh)];
   }
   /** The zone's gate opens. */
-  private solveZone(): void {
+  private solveZone(learned: string[] = []): void {
     this.cur.solved = true;
-    if (!this.phase) this.args.emit({ type: 'toast', text: this.rail.display(), sub: 'Now use what you made.' });
+    if (this.phase) return;
+    this.args.emit({
+      type: 'toast',
+      text: this.rail.display(),
+      sub: learned.length ? `Learned ${learned.map(notation).join(', ')}.` : 'Now use what you made.',
+    });
   }
 
   private animateSimplification(result: string, success: boolean): void {
@@ -1025,31 +1084,61 @@ export class World extends Phaser.Scene {
     }
   }
 
-  private hitEnemy(enemy: Enemy, force: number, damage: number): void {
-    enemy.hp -= damage;
+  /** Strikes push a Falsehood back; only the truth gets rid of it. */
+  private knock(enemy: Enemy, force: number): void {
     enemy.stun = 0.8;
     enemy.body.setVelocity(force, -230);
     this.dust.burst(enemy.rect.x, enemy.rect.y, INK, 12, 100);
-    if (enemy.hp <= 0) {
-      this.spawnToken(enemy.token, enemy.rect.x, Math.min(enemy.rect.y, 580)).body.setVelocity(force * 0.3, -150);
-      this.removeEnemy(enemy);
+  }
+  /** A thrown number adds a term toward true; a thrown ÷ halves how wrong it is. Anything else bounces off. */
+  private throwAt(enemy: Enemy, token: Token): void {
+    const value = evaluate(token.source).value;
+    const thrown: Thrown | null =
+      token.source === '/'
+        ? { kind: 'halve' }
+        : value && !isOperator(token.source)
+          ? { kind: 'number', value: value.num }
+          : null;
+    if (!thrown || !repair(enemy.lie, thrown)) {
+      token.body.setVelocity(-token.body.velocity.x * 0.35, -220);
+      this.args.audio.play('wrong');
+      return;
     }
+    this.knock(enemy, token.body.velocity.x * 0.4);
+    enemy.label.setText(lieText(enemy.lie)).setFontSize(LIE_SIZE[sizeOf(enemy.lie)]);
+    enemy.rect.setSize(enemy.label.width + 8, 38);
+    enemy.body.setSize(enemy.label.width + 8, 38);
+    this.args.audio.play('hit');
+    // Authored and stocked tokens are the only copies, so they go home instead of being used up.
+    if (token.home) token.release(...token.home);
+    else this.discardToken(token);
+    if (isTrue(enemy.lie)) {
+      enemy.resolved = 0.7;
+      enemy.label.setColor(this.character.hex);
+      this.args.audio.play('solve');
+    }
+  }
+  /** A repaired Falsehood dissolves and leaves its token behind. */
+  private dissolve(enemy: Enemy): void {
+    this.dust.burst(enemy.rect.x, enemy.rect.y, this.character.color, 30, 160);
+    this.spawnToken(enemy.token, enemy.rect.x, Math.min(enemy.rect.y, 580)).body.setVelocity(0, -200);
+    this.removeEnemy(enemy);
   }
   private damage(fromX: number): void {
     if (this.invulnerable > 0 || this.dying || this.transition) return;
-    this.hp--;
+    this.focus = Math.max(0, this.focus - HIT_COST);
     this.invulnerable = 1.5;
     this.vx = this.player.x < fromX ? -270 : 270;
     this.vy = -250;
     this.dust.burst(this.player.x, this.player.y, this.character.color, 20, 170);
     this.args.audio.play('damage');
     if (!this.args.settings.reducedMotion) this.cameras.main.shake(130, 0.003);
-    if (this.hp <= 0) this.die();
+    if (this.focus <= 0) this.die();
   }
   private die(): void {
     if (this.dying) return;
     this.dying = true;
-    this.hp = 0;
+    this.focus = 0;
     this.vx = 0;
     this.time.delayedCall(650, () => {
       this.args.emit({ type: 'death' });
@@ -1182,7 +1271,7 @@ export class World extends Phaser.Scene {
     const worldDt = dt * scale;
     this.worldClock += worldDt;
     if (slow) this.focus = Math.max(0, this.focus - dt);
-    else if (!manipulating) this.focus = Math.min(this.character.focus, this.focus + dt * 0.8);
+    else if (!manipulating) this.focus = Math.min(this.maxFocus, this.focus + dt * 0.8);
     for (const key of ['invulnerable', 'attack', 'handling', 'editTimer', 'counterLock'] as const)
       this[key] = Math.max(0, this[key] - dt);
     this.bossStun = Math.max(0, this.bossStun - worldDt);
@@ -1228,9 +1317,9 @@ export class World extends Phaser.Scene {
         const hasFloor = this.platforms.some(
           (p) => Math.abs(ahead - p.rect.x) < p.width / 2 && p.rect.y >= enemy.rect.y && p.rect.y < enemy.rect.y + 85,
         );
-        enemy.body.setVelocityX(hasFloor ? direction * (enemy.kind === 'operator' ? 95 : 65) : -direction * 50);
-        if (enemy.kind === 'cluster' && enemy.body.blocked.down && Math.sin(enemy.time * 2) > 0.985)
-          enemy.body.setVelocityY(-300);
+        const speed = { small: 80, large: 62, huge: 48 }[sizeOf(enemy.lie)];
+        enemy.body.setVelocityX(enemy.resolved ? 0 : hasFloor ? direction * speed : -direction * 50);
+        if (enemy.body.blocked.down && Math.sin(enemy.time * 2) > 0.985) enemy.body.setVelocityY(-300);
       }
     });
     this.physics.world.update(this.worldClock * 1000, worldDt * 1000);
@@ -1251,20 +1340,18 @@ export class World extends Phaser.Scene {
             return;
           }
         }
-        for (const enemy of [...this.enemies])
-          if (
-            !token.hit.has(enemy) &&
-            Phaser.Math.Distance.Between(
-              token.body.center.x,
-              token.body.center.y,
-              enemy.body.center.x,
-              enemy.body.center.y,
-            ) < 40
-          ) {
-            token.hit.add(enemy);
-            this.hitEnemy(enemy, token.body.velocity.x * 0.65, Math.abs(token.body.velocity.x) > 450 ? 2 : 1);
-            token.body.velocity.x *= 0.55;
-          }
+        const struck = this.enemies.find(
+          (e) =>
+            !e.resolved &&
+            !token.hit.has(e) &&
+            Math.abs(token.body.center.x - e.body.center.x) < e.body.halfWidth + 14 &&
+            Math.abs(token.body.center.y - e.body.center.y) < 34,
+        );
+        if (struck) {
+          token.hit.add(struck);
+          this.throwAt(struck, token);
+          if (!this.tokens.includes(token)) return;
+        }
         if (token.body.speed < 45 && token.age > 0.5) token.state = 'loose';
       }
     });
@@ -1287,9 +1374,11 @@ export class World extends Phaser.Scene {
       if (loose) this.discardToken(loose);
     }
     this.enemies.forEach((e) => {
-      e.glyph.setPosition(e.body.center.x, e.body.center.y).setRotation(Math.sin(e.time * 2) * 0.12);
+      e.label.setPosition(e.body.center.x, e.body.center.y).setRotation(Math.sin(e.time * 2) * 0.06);
     });
-    for (const enemy of [...this.enemies]) if (enemy.rect.y > 850) this.hitEnemy(enemy, 0, 99);
+    for (const enemy of [...this.enemies])
+      if (enemy.resolved && (enemy.resolved -= dt) <= 0) this.dissolve(enemy);
+      else if (enemy.rect.y > 850) this.removeEnemy(enemy);
     if (combat && this.introSafe <= 0 && this.bossStun <= 0) {
       this.attackTimer -= worldDt;
       if (this.attackTimer <= 0) {
@@ -1362,7 +1451,14 @@ export class World extends Phaser.Scene {
           direction * 295 * this.character.speed,
           Math.min(1, dt * (grounded ? 18 : 10)),
         );
-      if (direction) this.facing = direction;
+      if (direction) {
+        this.facing = direction;
+        this.moving += dt;
+        if (this.moving > 1) {
+          this.moving = 0;
+          this.teach('move');
+        }
+      }
       if (this.jumpBuffer > 0 && this.coyote > 0) {
         this.vy = -560 * this.character.jump;
         this.coyote = 0;
@@ -1370,6 +1466,7 @@ export class World extends Phaser.Scene {
         this.standing = undefined;
         this.onRamp = false;
         this.args.audio.play('jump');
+        this.teach('jump');
         this.dust.burst(this.player.x, this.player.y + 30, this.character.color, 6, 70);
       }
       if (Phaser.Input.Keyboard.JustUp(this.keys.SPACE) && this.vy < -200) this.vy *= 0.52;
@@ -1547,29 +1644,45 @@ export class World extends Phaser.Scene {
         this.character.id === 'yellow',
       );
     const rack = this.nearbyRack();
-    if (nearby)
-      this.hint.setText(
-        this.held
-          ? 'E  place / swap     ·     Aim at a slot to choose it     ·     F  evaluate'
-          : 'E  take a symbol     ·     F  evaluate',
-      );
-    else if (rack)
-      this.hint.setText(
-        `E  take ${notation(rack.source)}     ·     Scroll / Q  choose symbol     ·     ${rack.index + 1} / ${rack.choices.length}`,
-      );
-    else if (this.held) this.hint.setText('E  drop     ·     Aim + click  throw');
-    else if (this.clock < 18 && this.cur.region === 0 && this.cur.index === 0)
-      this.hint.setText('A D  move     ·     Space  jump     ·     E  pick up');
-    else this.hint.setText('');
+    this.hint.setText(
+      nearby
+        ? this.hintFor(
+            this.held
+              ? [
+                  ['place', 'E  place / swap'],
+                  ['place', 'Aim at a slot to choose it'],
+                  ['evaluate', 'F  evaluate'],
+                ]
+              : [
+                  ['take', 'E  take a symbol'],
+                  ['evaluate', 'F  evaluate'],
+                ],
+          )
+        : rack
+          ? this.hintFor([
+              ['take', `E  take ${notation(rack.source)}`],
+              ['choose', 'Scroll / Q  choose symbol'],
+              ['choose', `${rack.index + 1} / ${rack.choices.length}`],
+            ])
+          : this.held
+            ? this.hintFor([
+                ['take', 'E  drop'],
+                ['throw', 'Aim + click  throw'],
+              ])
+            : this.hintFor([
+                ['move', 'A D  move'],
+                ['jump', 'Space  jump'],
+                ['take', 'E  pick up'],
+              ]),
+    );
   }
 
   private updateHud(): void {
     const steps = REGIONS[this.cur.region].zones;
     this.args.emit({
       type: 'hud',
-      hp: this.hp,
       focus: this.focus,
-      maxFocus: this.character.focus,
+      maxFocus: this.maxFocus,
       objective: this.cur.solved ? 'Go on through the open gate.' : this.beat.objective,
       chapter: this.chapter,
       title: this.cur.zone.title,

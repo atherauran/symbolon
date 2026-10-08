@@ -177,6 +177,8 @@ export interface Beat {
   enemyTokens?: string[];
   hazard?: Hazard;
   intro?: string;
+  /** The law or concept this zone teaches; it joins the known set when the rail first works. */
+  law?: string;
   /** Tokens placed in the world instead of on a rack, as [token, x, y]. */
   loose?: [string, number, number][];
   /** The Unknown knocks carried operators out of the rail. */
@@ -202,6 +204,8 @@ export interface CheckpointState {
   furthest: number;
   /** Numbers, operators and laws learned by solving rails. */
   known: string[];
+  /** Controls the player has used often enough that their hints have retired. */
+  taught: string[];
   complete: boolean;
   elapsed: number;
 }
@@ -213,7 +217,6 @@ export interface Settings {
 export type GameEvent =
   | {
       type: 'hud';
-      hp: number;
       focus: number;
       maxFocus: number;
       objective: string;
