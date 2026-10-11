@@ -48,7 +48,7 @@ const CHAPTERS: Omit<Region, 'zones'>[] = [
     huge: 0,
     subtitle: 'There is something on the other side.',
     knowledge:
-      'Work with negative numbers, fractions, powers, and square roots. Apply signed speed and solve linear equations.',
+      'Work with negative numbers, fractions, powers, and square roots. Apply speed and solve linear equations.',
     numeral: 'II',
     symbol: '−',
   },
@@ -167,13 +167,6 @@ const ENCOUNTERS: Draft[][] = [
       { kind: 'division', cells: 8, size: 0.75 },
       { enemies: 1, enemyTokens: ['2'], intro: 'A cell divides into two.', law: 'cell division' },
     ),
-    device(
-      'A taller wall',
-      'Build steps to the top of the wall.',
-      rail('Steps', ['2', '*', '3']),
-      { kind: 'stairs', height: 6, bricks: true },
-      { stock: ['2', '3', '+', '*'], enemies: 2, enemyTokens: ['1'] },
-    ),
   ]),
   puzzle(1, 'Measure twice', 'The world has its own numbers.', [
     device(
@@ -188,7 +181,7 @@ const ENCOUNTERS: Draft[][] = [
       'Make the cell’s image fit the lock exactly.',
       rail('Magnification · eyepiece × objective', ['5', '*', '10']),
       { kind: 'microscope', mode: 'zoom', specimen: 0.1, gate: 5 },
-      { enemies: 2, enemyTokens: ['5', '10'], hazard: 'bolts', law: 'magnification' },
+      { enemies: 2, enemyTokens: ['5', '10'], hazard: 'bolts', law: 'magnification', loose: [['*', 200, 590]] },
     ),
   ]),
   puzzle(1, 'Applied mathematics', 'Put some force behind the idea.', [
@@ -220,16 +213,6 @@ const ENCOUNTERS: Draft[][] = [
       'bolts',
       2,
       { intro: '𝑥 stands for a number nobody has found yet.', law: 'unknowns' },
-    ),
-    phase(
-      'Ten times over',
-      '2 × 𝑥 = 10',
-      'MULTIPLY',
-      'Find 𝑥. Guard your operators.',
-      rail('𝑥 =', ['2', '+', '3'], { effect: 'solve', substitute: '2*x', target: 10 }),
-      'bolts',
-      2,
-      { theft: true },
     ),
   ]),
   // Chapter II — Below Zero
@@ -279,13 +262,6 @@ const ENCOUNTERS: Draft[][] = [
         hazard: 'vectors',
         loose: [['/', 860, 590]],
       },
-    ),
-    device(
-      'Late ferry',
-      'Bring the ferry to you as the bar levels. Rightward is positive.',
-      rail('Ferry velocity · m/s', ['0', '-', '1', '/', '2'], { units: 'm/s' }),
-      { kind: 'cart', distance: 3, time: 6, reverse: true },
-      { enemies: 2, enemyTokens: ['6', '/'], hazard: 'vectors' },
     ),
   ]),
   puzzle(2, 'Something is watching', 'A familiar shape. An unfamiliar intention.', [
@@ -410,22 +386,6 @@ const ENCOUNTERS: Draft[][] = [
         hazard: 'bolts',
       },
     ),
-    device(
-      'Two loads',
-      'Balance both loads at once.',
-      rail('Hook weight · N', ['10', '/', '5'], { units: 'N' }),
-      {
-        kind: 'lever',
-        arms: [3, 5],
-        loads: [
-          { side: -1, arm: 3, force: 2 },
-          { side: -1, arm: 1, force: 4 },
-        ],
-        control: 'force',
-        controlArm: 5,
-      },
-      { enemies: 3, enemyTokens: ['5', '/', '2'], hazard: 'negative', theft: true },
-    ),
   ]),
   puzzle(3, 'Heavy company', 'They brought weight with them.', [
     device(
@@ -441,33 +401,6 @@ const ENCOUNTERS: Draft[][] = [
         loose: [
           ['*', 140, 590],
           ['/', 880, 590],
-        ],
-      },
-    ),
-    device(
-      'Heavier company',
-      'Three identical crates. Level the balance.',
-      rail('Each crate · kg', ['6', '/', '3'], { units: 'kg' }),
-      {
-        kind: 'lever',
-        pans: true,
-        arms: [3, 3],
-        loads: [
-          { side: -1, arm: 3, mass: 0, label: '𝑥', count: 3 },
-          { side: -1, arm: 3, mass: 2 },
-          { side: 1, arm: 3, mass: 8 },
-        ],
-        control: 'mass',
-      },
-      {
-        enemies: 3,
-        enemyTokens: ['6', '3', '8'],
-        hazard: 'negative',
-        theft: true,
-        noOperatorRack: true,
-        loose: [
-          ['/', 300, 590],
-          ['-', 860, 590],
         ],
       },
     ),
@@ -494,22 +427,6 @@ const ENCOUNTERS: Draft[][] = [
         enemyTokens: ['9', '5'],
         hazard: 'bolts',
       },
-    ),
-    device(
-      'Bounce',
-      'Aim the laser at the floor mirror so the beam reaches the sensor.',
-      rail('Laser angle below horizontal · °', ['5', '*', '9'], { units: '°' }),
-      {
-        kind: 'mirror',
-        laser: [1000, 298],
-        beam: 0,
-        mirror: [1320, 618],
-        tilt: 0,
-        sensor: [1640, 298],
-        control: 'aim',
-        bridge: [1500, 1900],
-      },
-      { enemies: 2, enemyTokens: ['5', '*'], hazard: 'vectors' },
     ),
     device(
       'Bank shot',
@@ -593,25 +510,6 @@ const ENCOUNTERS: Draft[][] = [
       3,
       { device: { kind: 'line', control: 'b', k: 2, core: [4, 5] }, core: gridPoint(4, 5) },
     ),
-    phase(
-      'Mirror shield',
-      '𝑦 = −𝑥',
-      'REFLECT',
-      'Turn the mirror square to its beam and send it home.',
-      rail('Mirror tilt · °', ['3', '^', '3', '*', '5'], { units: '°' }),
-      'waves',
-      2,
-      {
-        device: {
-          kind: 'mirror',
-          laser: [898, 282],
-          beam: 225,
-          mirror: [813, 367],
-          sensor: [940, 240],
-          control: 'tilt',
-        },
-      },
-    ),
   ]),
   // Chapter V — Waves
   puzzle(5, 'Riding the wave', 'Motion has a rhythm.', [
@@ -677,32 +575,6 @@ const ENCOUNTERS: Draft[][] = [
         enemies: 2,
         enemyTokens: ['8', '4'],
         hazard: 'vectors',
-      },
-    ),
-  ]),
-  puzzle(5, 'Loud and clear', 'Some things only open for the right note.', [
-    device(
-      'Rising tide',
-      'Ride the platforms up to the ledge.',
-      rail('Amplitude · m', ['9', '/', '3'], { units: 'm' }),
-      { kind: 'wave', mode: 'amplitude', ledge: 3, frequency: 0.4 },
-      { enemies: 3, enemyTokens: ['9', '3', '/'], hazard: 'waves' },
-    ),
-    device(
-      'Under pressure',
-      'Open the sound gate. 𝑥 wants your operators.',
-      rail('Frequency · Hz', ['3', '*', '10', '*', '10'], { units: 'Hz' }),
-      { kind: 'scope', mode: 'frequency', amplitude: 3, frequency: 300 },
-      {
-        enemies: 3,
-        enemyTokens: ['10', '3', '10'],
-        hazard: 'vectors',
-        theft: true,
-        noOperatorRack: true,
-        loose: [
-          ['*', 200, 590],
-          ['*', 760, 590],
-        ],
       },
     ),
   ]),

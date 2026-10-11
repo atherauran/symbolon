@@ -142,11 +142,9 @@ export function judge(beat: Beat, value: Value): Verdict {
         `${fmt(v)} steps of 1 m reach ${fmt(v)} m${near(v, device.height) ? ', level with the ledge.' : v < device.height ? '. Too low for the ledge.' : '. Higher than the ledge.'}`,
       );
     case 'cart': {
-      const speed = device.reverse ? -v : v;
-      if (speed <= 0)
-        return verdict(false, v === 0 ? 'At 0 m/s the cart never moves.' : 'The cart moves the wrong way.');
-      const t = travelTime(device.distance, speed);
-      return verdict(near(t, device.time), `${fmt(device.distance)} m at ${fmt(Math.abs(v))} m/s takes ${fmt(t)} s.`);
+      if (v <= 0) return verdict(false, v === 0 ? 'At 0 m/s the cart never moves.' : 'The cart moves the wrong way.');
+      const t = travelTime(device.distance, v);
+      return verdict(near(t, device.time), `${fmt(device.distance)} m at ${fmt(v)} m/s takes ${fmt(t)} s.`);
     }
     case 'meet': {
       if (v <= 0) return verdict(false, 'Your cart must move toward the trap.');

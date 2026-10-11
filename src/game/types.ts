@@ -118,7 +118,7 @@ export type DeviceSpec =
   | { kind: 'measure'; gap: number; start: number }
   | { kind: 'stairs'; height: number; bricks?: boolean }
   | { kind: 'launch'; height: number }
-  | { kind: 'cart'; distance: number; time: number; reverse?: boolean }
+  | { kind: 'cart'; distance: number; time: number }
   | { kind: 'meet'; distance: number; runnerDistance: number; runnerSpeed: number; trapX: number }
   | {
       kind: 'lever';

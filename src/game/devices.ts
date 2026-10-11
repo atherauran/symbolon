@@ -403,36 +403,29 @@ class CartDevice extends Device {
   ) {
     super(host);
   }
-  private get reverse(): boolean {
-    return Boolean(this.spec.reverse);
-  }
   /** Cart centre at rest. */
   private get home(): number {
-    return this.reverse ? LIP + M + this.spec.distance * M + 40 : LIP - 40;
+    return LIP - 40;
   }
   private get pivot(): number {
-    return this.reverse ? LIP : LIP + this.spec.distance * M + M;
+    return LIP + this.spec.distance * M + M;
   }
   /** Bar direction in math degrees: it swings through level at time T at 90° per second. */
   private barAngle(t: number): number {
     const swing = Phaser.Math.Clamp(90 * (t - (this.spec.time - 1)), 0, 180);
-    return this.reverse ? 90 - swing : 90 + swing;
+    return 90 + swing;
   }
   build(): void {
     const { distance } = this.spec;
-    if (this.reverse) this.ground(LIP + 2 * M + distance * M, END);
-    else this.ground(this.pivot, END);
+    this.ground(this.pivot, END);
     this.x = this.home;
     this.cart = this.host.platform(this.x, this.y, 80, 20, true);
-    const trackStart = this.reverse ? LIP + M : LIP;
-    this.statics
-      .lineStyle(2, INK, 0.45)
-      .lineBetween(trackStart, GY + 2, trackStart + distance * M + (this.reverse ? M : 0), GY + 2);
-    for (let x = trackStart; x <= trackStart + distance * M; x += M)
+    this.statics.lineStyle(2, INK, 0.45).lineBetween(LIP, GY + 2, LIP + distance * M, GY + 2);
+    for (let x = LIP; x <= LIP + distance * M; x += M)
       this.statics.lineStyle(1, MUTED, 0.6).lineBetween(x, GY + 2, x, GY + 80);
-    ruler(this.scene, this.statics, trackStart, GY + 40, distance);
+    ruler(this.scene, this.statics, LIP, GY + 40, distance);
     this.statics.lineStyle(2, INK, 0.6).lineBetween(this.pivot, GY, this.pivot, GY + 90);
-    this.clock = new Stopwatch(this.scene, this.reverse ? LIP + 40 : this.pivot - 40, GY - 210);
+    this.clock = new Stopwatch(this.scene, this.pivot - 40, GY - 210);
   }
   run(value: number, success: boolean): void {
     super.run(value, success);
@@ -443,7 +436,7 @@ class CartDevice extends Device {
     this.arrived = false;
   }
   private dock(): number {
-    return this.reverse ? LIP + M + 40 : this.pivot + M - 40;
+    return this.pivot + M - 40;
   }
   update(dt: number): void {
     if (this.state === 'idle') {
@@ -455,8 +448,7 @@ class CartDevice extends Device {
       return;
     }
     this.t += dt;
-    const direction = this.reverse ? -1 : 1,
-      v = this.value;
+    const v = this.value;
     if (this.fall) {
       this.vy += 1450 * dt;
       this.y += this.vy * dt;
@@ -472,14 +464,14 @@ class CartDevice extends Device {
       }
     } else {
       this.x = this.home + v * this.t * M;
-      const travelled = ((this.x - this.home) * direction) / M;
-      if (v * direction <= 0) {
+      const travelled = (this.x - this.home) / M;
+      if (v <= 0) {
         if (this.t > 2 || v === 0) this.restart();
       } else if (travelled >= this.spec.distance) {
         if (this.success) {
-          this.x = this.home + direction * this.spec.distance * M;
+          this.x = this.home + this.spec.distance * M;
           this.arrived = true;
-          this.bar = this.host.platform(this.reverse ? LIP + 40 : this.pivot - 40, GY + 6, 80, 12, true);
+          this.bar = this.host.platform(this.pivot - 40, GY + 6, 80, 12, true);
         } else if (travelled >= this.spec.distance + 0.5) this.fall = true;
       }
     }
@@ -509,7 +501,7 @@ class CartDevice extends Device {
   draw(g: Graphics): void {
     const level = this.arrived || this.state === 'success',
       time = this.state === 'idle' ? this.demo : level ? this.spec.time : this.t;
-    const angle = level ? (this.reverse ? 0 : 180) : this.barAngle(time);
+    const angle = level ? 180 : this.barAngle(time);
     g.lineStyle(6, level ? this.accent : INK, 0.85).lineBetween(
       this.pivot,
       GY + 4,

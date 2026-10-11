@@ -97,10 +97,16 @@ interface LiveZone {
 const RAIL_X = 655,
   RAIL_Y = 536,
   GATE_TOP = -420;
-/** Knowledge replaces health: each known concept adds focus, up to a cap. A hit costs one second of it. */
+/** Knowledge replaces health: each known concept adds focus, up to a cap. A hit costs one full point of it. */
 const FOCUS_PER_CONCEPT = 0.2,
   FOCUS_BONUS_CAP = 4,
-  HIT_COST = 1;
+  HIT_COST = 1,
+  /** Focus regained per second with empty hands. Kept under HIT_COST / 1.5 s of invulnerability so constant hits still drain it. */
+  FOCUS_REGEN = 0.4,
+  /** Focus spent per second while holding or editing during combat. */
+  FOCUS_DRAIN = 0.6;
+/** Seconds between replacements for fallen Falsehoods while a zone is unsolved. */
+const REINFORCE_DELAY = 10;
 /** Uses before a control's hint retires. */
 const TEACH_USES = 3;
 const LIE_SIZE = { small: 24, large: 30, huge: 36 };
@@ -647,7 +653,7 @@ export class World extends Phaser.Scene {
     if (this.phase || this.cur.solved || this.transition || this.enemies.length >= (this.beat.enemies ?? 0)) return;
     this.reinforceTimer -= dt;
     if (this.reinforceTimer > 0) return;
-    this.reinforceTimer = 7;
+    this.reinforceTimer = REINFORCE_DELAY;
     const x = this.cur.ox + (this.player.x < this.cur.ox + 475 ? 880 : 70);
     this.spawnEnemy(x, 540);
     this.dust.burst(x, 540, HAZARD, 18, 120);
@@ -1277,8 +1283,8 @@ export class World extends Phaser.Scene {
     const scale = slow ? 0.35 : 1;
     const worldDt = dt * scale;
     this.worldClock += worldDt;
-    if (slow) this.focus = Math.max(0, this.focus - dt);
-    else if (!manipulating) this.focus = Math.min(this.maxFocus, this.focus + dt * 0.8);
+    if (slow) this.focus = Math.max(0, this.focus - dt * FOCUS_DRAIN);
+    else if (!manipulating) this.focus = Math.min(this.maxFocus, this.focus + dt * FOCUS_REGEN);
     for (const key of ['invulnerable', 'attack', 'handling', 'editTimer', 'counterLock'] as const)
       this[key] = Math.max(0, this[key] - dt);
     this.bossStun = Math.max(0, this.bossStun - worldDt);

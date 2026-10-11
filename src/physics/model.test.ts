@@ -43,8 +43,6 @@ test('carts arrive only when the bar is level', () => {
   const cart: DeviceSpec = { kind: 'cart', distance: 8, time: 4 };
   assert.ok(ok(cart, 2));
   assert.ok(!ok(cart, 3) && !ok(cart, -2) && !ok(cart, 0));
-  const ferry: DeviceSpec = { kind: 'cart', distance: 6, time: 3, reverse: true };
-  assert.ok(ok(ferry, -2) && !ok(ferry, 2));
 });
 
 test('levers tip toward the larger moment', () => {
