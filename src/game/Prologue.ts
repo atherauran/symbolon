@@ -12,35 +12,36 @@ export interface PrologueArgs {
 const FALSEHOOD = 0xefb7a4;
 const ROWS = ['1+1=', '2+3=', '4+2=', '3+5='];
 /** The worksheet, lying on the desk: its four rows start here and step down and slightly right. */
-const PAPER = { x: 548, y: 392, row: 33, slant: 7, advance: 28 };
+const PAPER = { x: 508, y: 392, row: 33, slant: 7, advance: 28 };
 /** Where the page pulls everything in. */
-const SINK: [number, number] = [630, 445];
+const SINK: [number, number] = [600, 445];
 /** Pens lie side by side at the desk's front edge, tip toward the paper. */
 const PEN = { x: 800, y: 505, gap: 50, length: 92, tilt: -1.15 };
-/** Seated kid: shoulder, hip and the hand that holds the pen. */
+/** Seated kid: the hip on the chair, the torso bent over the desk, feet out of sight under it. */
 const KID = {
-  head: [420, 292],
-  neck: [410, 318],
-  shoulder: [406, 340],
-  hip: [372, 440],
-  knee: [468, 444],
-  foot: [470, 540],
-  rest: [520, 470],
-} satisfies Record<string, [number, number]>;
-const ARM = 118;
+  hip: [402, 443],
+  foot: [498, 536],
+  lean: 0.35,
+  /** Where the hands rest on the desk until a pen is picked. */
+  rest: [535, 450],
+  other: [515, 458],
+} as const;
+/** Bone lengths, in pixels. */
+const BODY = { head: 27, torso: 140, shoulder: 14, upperArm: 86, forearm: 82, thigh: 104, shin: 108 };
 
 const ease = (t: number) => t * t * (3 - 2 * t);
 const clamp01 = (t: number) => Phaser.Math.Clamp(t, 0, 1);
 const span = (t: number, a: number, b: number) => clamp01((t - a) / (b - a));
 const lerp = Phaser.Math.Linear;
-/** The elbow of a two-segment arm, bending downward; a stretched arm goes straight. */
-function elbow([ax, ay]: [number, number], [bx, by]: [number, number], length: number): [number, number] {
-  const d = Math.hypot(bx - ax, by - ay) || 1,
-    h = Math.sqrt(Math.max(0, length * length - (d / 2) ** 2));
-  const nx = -(by - ay) / d,
-    ny = (bx - ax) / d,
-    side = ny > 0 ? 1 : -1;
-  return [(ax + bx) / 2 + nx * h * side, (ay + by) / 2 + ny * h * side];
+type Point = [number, number];
+/** The middle joint of a two-bone limb from a to b; side picks which way it bends. Out of reach, the limb straightens. */
+function joint([ax, ay]: Point, [bx, by]: Point, first: number, second: number, side: 1 | -1): Point {
+  const d = Math.min(Math.hypot(bx - ax, by - ay) || 1, first + second),
+    ux = (bx - ax) / d,
+    uy = (by - ay) / d,
+    along = (first * first - second * second + d * d) / (2 * d),
+    h = Math.sqrt(Math.max(0, first * first - along * along)) * side;
+  return [ax + ux * along - uy * h, ay + uy * along + ux * h];
 }
 
 /**
@@ -61,6 +62,8 @@ export class Prologue extends Phaser.Scene {
   private t = 0;
   private clock = 0;
   private finished = false;
+  /** The kid's head before the page pulls it in; the loose sums circle it. */
+  private head: Point = [0, 0];
 
   constructor() {
     super('Prologue');
@@ -185,10 +188,23 @@ export class Prologue extends Phaser.Scene {
     const caption = picked ? 1 - span(t, 0.6, 1.5) : 1;
     [this.name, this.trait, this.description].forEach((label) => label.setAlpha(caption));
     const g = this.g.clear();
+    const kid = this.skeleton(t, picked),
+      width = 5 * (1 - 0.85 * kid.pull) + 0.5;
     this.room(g);
+    this.chair(g);
+    // The legs go under the desk, so the desk is drawn over them.
+    g.lineStyle(width, color, 1 - kid.pull * 0.6).strokePoints(
+      [kid.hip, kid.knee, kid.foot].map(([x, y]) => new Phaser.Geom.Point(x, y)),
+    );
     this.desk(g);
     this.page(g, t, picked);
-    this.kid(g, t, color, picked);
+    g.lineStyle(width, color, 1 - kid.pull * 0.6).strokeCircle(...kid.head, BODY.head * (1 - 0.85 * kid.pull));
+    for (const limb of [
+      [kid.neck, kid.hip],
+      [kid.shoulder, kid.otherElbow, kid.other],
+      [kid.shoulder, kid.elbow, kid.hand],
+    ])
+      g.strokePoints(limb.map(([x, y]) => new Phaser.Geom.Point(x, y)));
     this.pens(g, t);
     this.jaws(g, t, picked);
   }
@@ -202,6 +218,19 @@ export class Prologue extends Phaser.Scene {
       .lineBetween(110, 175, 320, 175);
     g.fillStyle(0xe8eefc, 1).fillCircle(272, 128, 17);
     g.fillStyle(0x0d1630, 1).fillCircle(280, 122, 14);
+    // A graduation cap waits on the shelf for the day after the last homework.
+    g.lineStyle(2, 0x3c4f80, 0.8).lineBetween(350, 214, 450, 214);
+    g.fillStyle(0x1a2440, 1).fillRect(384, 196, 32, 18);
+    g.fillStyle(0x24305a, 1).fillPoints(
+      [
+        new Phaser.Geom.Point(400, 186),
+        new Phaser.Geom.Point(440, 194),
+        new Phaser.Geom.Point(400, 202),
+        new Phaser.Geom.Point(360, 194),
+      ],
+      true,
+    );
+    g.lineStyle(2, 0xffd97a, 0.85).lineBetween(400, 194, 428, 200).lineBetween(428, 200, 428, 224);
     g.lineStyle(1, 0x2a3558, 0.9).lineBetween(0, 560, 1280, 560);
     // Lamp light pools on the desk.
     for (let i = 6; i > 0; i--) g.fillStyle(0xffd678, 0.022).fillCircle(900, 390, 70 + i * 55);
@@ -229,63 +258,73 @@ export class Prologue extends Phaser.Scene {
     g.lineStyle(2, 0x6b7bb0, 0.9).lineBetween(440, 540, 1110, 540).lineBetween(480, 430, 1140, 430);
     g.lineBetween(440, 540, 480, 430).lineBetween(1110, 540, 1140, 430);
     g.lineBetween(460, 540, 460, 640).lineBetween(1090, 540, 1090, 640);
-    // Chair.
+  }
+  private chair(g: Phaser.GameObjects.Graphics): void {
     g.lineStyle(2, 0x6b7bb0, 0.8)
-      .lineBetween(325, 452, 435, 452)
-      .lineBetween(335, 452, 335, 560)
-      .lineBetween(425, 452, 425, 560);
-    g.lineBetween(325, 452, 307, 320);
+      .lineBetween(345, 452, 455, 452)
+      .lineBetween(355, 452, 355, 560)
+      .lineBetween(445, 452, 445, 560)
+      .lineBetween(345, 452, 327, 320);
   }
   /** The worksheet: a pale sheet with four rows of sums. */
   private page(g: Phaser.GameObjects.Graphics, t: number, picked: boolean): void {
     const shake = picked && t > 2.4 && t < 5 ? (Math.random() - 0.5) * 2 : 0;
     g.fillStyle(0xe4e9f2, 1).fillPoints(
       [
-        new Phaser.Geom.Point(515 + shake, 368),
-        new Phaser.Geom.Point(705 + shake, 368),
-        new Phaser.Geom.Point(735 + shake, 522),
-        new Phaser.Geom.Point(535 + shake, 522),
+        new Phaser.Geom.Point(475 + shake, 368),
+        new Phaser.Geom.Point(665 + shake, 368),
+        new Phaser.Geom.Point(695 + shake, 522),
+        new Phaser.Geom.Point(495 + shake, 522),
       ],
       true,
     );
     g.lineStyle(1, 0x506eaa, 0.3);
     for (let r = 0; r < ROWS.length; r++) {
       const [, y] = this.cell(r, 0);
-      g.lineBetween(522 + r * PAPER.slant, y + 14, 702 + r * PAPER.slant, y + 14);
+      g.lineBetween(482 + r * PAPER.slant, y + 14, 662 + r * PAPER.slant, y + 14);
     }
     const write = picked ? span(t, 0.9, 1.7) : 0;
     this.answer.setAlpha(write).setColor(picked ? CHARACTERS[this.picked].hex : '#3b465c');
     if (picked && t > 4) this.answer.setAlpha(1 - span(t, 4, 4.6));
   }
-  /** The seated kid. After the pick, the hand takes the pen to the first row and writes. */
-  private kid(g: Phaser.GameObjects.Graphics, t: number, color: number, picked: boolean): void {
-    const pull = picked ? ease(span(t, 4.1, 5.2)) : 0;
-    const sink = ([x, y]: [number, number]): [number, number] => [
-      lerp(x, SINK[0], pull * pull),
-      lerp(y, SINK[1], pull * pull),
-    ];
-    const breathe = Math.sin(this.clock * 2) * 1.5,
-      lean = picked ? Math.min(1, t) * 10 : 0;
-    const head = sink([KID.head[0] + lean, KID.head[1] + breathe]),
-      neck = sink([KID.neck[0] + lean * 0.6, KID.neck[1] + breathe]),
-      shoulder = sink([KID.shoulder[0] + lean * 0.5, KID.shoulder[1] + breathe]),
-      hip = sink(KID.hip),
-      knee = sink(KID.knee),
-      foot = sink(KID.foot),
-      hand = sink(this.hand(t, picked)),
-      resting = sink([502, 446]);
-    const scale = 1 - 0.85 * pull;
-    g.lineStyle(5 * scale + 0.5, color, 1 - pull * 0.6);
-    g.strokeCircle(...head, 18 * scale);
-    g.lineBetween(...neck, ...hip)
-      .lineBetween(...hip, ...knee)
-      .lineBetween(...knee, ...foot);
-    const writing = elbow(shoulder, hand, ARM * scale),
-      other = elbow(shoulder, resting, ARM * 0.62 * scale);
-    g.lineBetween(...shoulder, ...writing).lineBetween(...writing, ...hand);
-    g.lineBetween(...shoulder, ...other).lineBetween(...other, ...resting);
+  /**
+   * The seated kid, bent over the worksheet. After the pick, they lean in and the hand takes the pen to the first
+   * row; at the end every joint is pulled into the page.
+   */
+  private skeleton(t: number, picked: boolean) {
+    const pull = picked ? ease(span(t, 4.1, 5.2)) : 0,
+      lean = KID.lean + (picked ? Math.min(1, t) * 0.25 : 0) + Math.sin(this.clock * 2) * 0.008;
+    const hip = KID.hip as Point,
+      along = (length: number, angle = lean): Point => [
+        hip[0] + Math.sin(angle) * length,
+        hip[1] - Math.cos(angle) * length,
+      ];
+    const neck = along(BODY.torso),
+      shoulder = along(BODY.torso - BODY.shoulder),
+      head: Point = [
+        neck[0] + Math.sin(lean + 0.3) * (BODY.head + 5),
+        neck[1] - Math.cos(lean + 0.3) * (BODY.head + 5),
+      ],
+      hand = this.hand(t, picked),
+      other = KID.other as Point;
+    const joints = {
+      hip,
+      neck,
+      shoulder,
+      head,
+      hand,
+      other,
+      foot: KID.foot as Point,
+      // Knees bend up and forward; elbows drop back toward the body.
+      knee: joint(hip, KID.foot as Point, BODY.thigh, BODY.shin, -1),
+      elbow: joint(shoulder, hand, BODY.upperArm, BODY.forearm, 1),
+      otherElbow: joint(shoulder, other, BODY.upperArm, BODY.forearm, 1),
+    };
+    this.head = head;
+    const sink = ([x, y]: Point): Point => [lerp(x, SINK[0], pull * pull), lerp(y, SINK[1], pull * pull)];
+    return { pull, ...(Object.fromEntries(Object.entries(joints).map(([k, v]) => [k, sink(v)])) as typeof joints) };
   }
-  private hand(t: number, picked: boolean): [number, number] {
+  private hand(t: number, picked: boolean): Point {
     const rest = KID.rest;
     if (!picked) return [rest[0], rest[1] + Math.sin(this.clock * 1.3) * 2];
     const [ax, ay] = this.cell(0, 4);
@@ -326,7 +365,7 @@ export class Prologue extends Phaser.Scene {
   }
   /** The sums come loose: digits peel off and circle the kid, and each equals sign grows jaws. */
   private jaws(g: Phaser.GameObjects.Graphics, t: number, picked: boolean): void {
-    const head = KID.head,
+    const head = this.head,
       pull = picked ? ease(span(t, 4.1, 5.2)) : 0;
     for (const glyph of this.glyphs) {
       const [x0, y0] = this.cell(glyph.row, glyph.col);

@@ -3,6 +3,7 @@ import '@fontsource/stix-two-math';
 import '@fontsource-variable/manrope';
 import './style.css';
 import { Backdrop } from './game/Backdrop';
+import { Epilogue } from './game/Epilogue';
 import { Prologue } from './game/Prologue';
 import { World } from './game/World';
 import { AudioEngine } from './game/audio';
@@ -70,7 +71,7 @@ const game = new Phaser.Game({
     default: 'arcade',
     arcade: { gravity: { x: 0, y: 0 }, debug: false, fixedStep: false, customUpdate: true },
   },
-  scene: [Backdrop, Prologue, World],
+  scene: [Backdrop, Prologue, World, Epilogue],
   render: { transparent: false, powerPreference: 'high-performance' },
 });
 
@@ -196,7 +197,7 @@ function onEvent(event: GameEvent): void {
     card.classList.add('visible');
   } else if (event.type === 'pause') pause();
   else if (event.type === 'death') death();
-  else if (event.type === 'complete') ending(event.elapsed);
+  else if (event.type === 'complete') epilogue(event.elapsed);
 }
 function pause(): void {
   screen = 'paused';
@@ -243,10 +244,24 @@ function chapters(): void {
   }).join('');
   root.innerHTML = `<div class="selection-screen"><header>${brand()}<button class="text-button" data-action="title">← BACK</button></header><main class="chapter-menu"><div class="eyebrow">FROM ONE TO INFINITY</div><h2>A world<br><em>of possibilities.</em></h2><div class="chapter-list">${entries}</div><p class="muted">Chapters unlock as you move forward. Replay starts at the beginning of a chapter.</p></main></div>`;
 }
+/** The kid steps out of the page and graduates. */
+function epilogue(elapsed: number): void {
+  screen = 'epilogue';
+  root.innerHTML = '';
+  game.scene.stop('World');
+  game.scene.start('Epilogue', {
+    character: saved?.character ?? selected,
+    audio,
+    done: () => {
+      game.scene.stop('Epilogue');
+      game.scene.wake('Backdrop');
+      ending(elapsed);
+    },
+  });
+}
 function ending(elapsed: number): void {
   screen = 'ending';
-  game.scene.pause('World');
-  root.innerHTML = `<div class="ending-screen"><div class="eyebrow">EVERY END IS A BEGINNING</div><div class="ending-formula">(𝑥 − 1)² = 0</div><h2>You found<br><em>the unknown.</em></h2><p>It began with one. It was one all along.</p><div class="ending-stats"><span>6 CHAPTERS</span><span>${Math.floor(elapsed / 60)} MINUTES</span><span>𝑥 = 1</span></div><button class="primary" data-action="chapters">Find another possibility<span>↗</span></button><button class="text-button" data-action="title">RETURN TO TITLE</button><div class="credits">Inspired by Alan Becker’s <em>Animation vs. Math</em><br>An independent fan game · Original procedural art and sound<br>Mathematics belongs to everyone.</div></div>`;
+  root.innerHTML = `<div class="ending-screen"><div class="eyebrow">EVERY END IS A BEGINNING</div><div class="ending-formula">(𝑥 − 1)² = 0</div><h2>Congratulations,<br><em>graduate.</em></h2><p>It began with one sum on a worksheet. Every unknown since has had a value.</p><div class="ending-stats"><span>6 CHAPTERS</span><span>${Math.floor(elapsed / 60)} MINUTES</span><span>GRADUATED</span></div><button class="primary" data-action="chapters">Find another possibility<span>↗</span></button><button class="text-button" data-action="title">RETURN TO TITLE</button><div class="credits">Inspired by Alan Becker’s <em>Animation vs. Math</em><br>An independent fan game · Original procedural art and sound<br>Mathematics belongs to everyone.</div></div>`;
 }
 
 root.addEventListener('click', (event) => {

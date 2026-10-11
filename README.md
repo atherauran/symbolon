@@ -1,6 +1,6 @@
 # Symbolon
 
-A single-player browser action-puzzle game inspired by Alan Becker’s _Animation vs. Math_. A kid doing homework at night picks one of five pens, and the worksheet pulls them in. Carry numbers and operators, evaluate equations, repair walking falsehoods, and drive real middle-school physics and biology to change the world. Built with TypeScript, Phaser 3, Arcade Physics, and Vite; menus and overlays use HTML/CSS.
+A single-player browser action-puzzle game inspired by Alan Becker’s _Animation vs. Math_. A kid doing the last homework before graduation picks one of five pens, and the worksheet pulls them in; solving the final unknown lets them out to graduate. Carry numbers and operators, evaluate equations, repair walking falsehoods, and drive real middle-school physics and biology to change the world. Built with TypeScript, Phaser 3, Arcade Physics, and Vite; menus and overlays use HTML/CSS.
 
 ## Run locally
 
@@ -52,7 +52,7 @@ The campaign targets Chinese 初中 (middle school) mathematics, physics, and bi
 3. **Balance:** equal-arm balances, levers (F₁L₁ = F₂L₂), and weight (G = mg, g = 10 N/kg).
 4. **Line of Sight:** the law of reflection, the Pythagorean theorem as areas, convex lenses (u = 2f, and f < u < 2f for an enlarged image), and a duel on the coordinate grid (y = kx + b).
 5. **Waves:** frequency, oscilloscope waveforms (loudness and pitch), heart rate in beats per minute, and wave speed (v = λf).
-6. **The Unknown:** a final duel that combines every mechanic, from cell division to pitch, and ends by solving 𝑥² − 2𝑥 + 1 = 0.
+6. **The Unknown:** a final duel that combines every mechanic, from cell division to pitch, and ends by solving 𝑥² − 2𝑥 + 1 = 0. The page lets the kid go, and the epilogue is their graduation.
 
 Progress and settings are stored locally in the browser. Continue returns to the saved zone or boss phase. Chapter replay becomes available as chapters are reached.
 
@@ -63,7 +63,7 @@ Progress and settings are stored locally in the browser. Continue returns to the
 - `src/physics/model.ts` holds the physics laws and `judge()`, which decides every rail's outcome. It has no Phaser dependencies.
 - `src/rules/` holds the chemistry (`chem.ts`), biology (`bio.ts`), and Falsehood (`lies.ts`) rules. They have no Phaser dependencies.
 - `src/game/devices.ts` animates the physics and biology devices (levers, lenses, microscopes, cell cultures, food chains, hearts) and measuring instruments (rulers, protractors, stopwatches, counters). `src/game/objects.ts` implements tokens, typed rail slots, and racks. `World.ts` builds zones as the player approaches and unloads them behind the checkpoint, and runs movement, combat, math devices, bosses, and operator theft. Devices work in their own zone's coordinates; the World places what they create.
-- `src/game/Prologue.ts` is the opening: the night desk, the pen pick, and the worksheet pulling the kid in.
+- `src/game/Prologue.ts` is the opening: the night desk, the pen pick, and the worksheet pulling the kid in. `src/game/Epilogue.ts` is the close: the graduation stage, the worksheet returned as a diploma, and the cap toss.
 - `src/main.ts` owns HTML overlays, local saves, and scene transitions.
 
 Every rail lists a canonical `solution`. Its slots are derived from that solution, and the tests check that each solution uses tokens available at that point and passes `judge()`. Devices must follow one rule: each device simulates a textbook 初中 law exactly, in real units (1 m = 80 px, world seconds), and fails in the physically correct way. The numbers a puzzle needs come from instruments in the scene, not from rail labels. Math devices (the first bridge, launch pads) carry no physical law beyond their stated geometry.
