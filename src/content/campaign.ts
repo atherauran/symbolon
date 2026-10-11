@@ -787,7 +787,7 @@ const ENCOUNTERS: Draft[][] = [
       rail('𝑥 =', ['1'], { effect: 'solve', substitute: 'x^2-2*x+1', target: 0 }),
       'vectors',
       1,
-      { intro: 'One last expression.', law: 'quadratic equations' },
+      { intro: 'The last problem on the page.', law: 'quadratic equations' },
     ),
   ]),
 ];

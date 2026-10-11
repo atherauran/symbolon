@@ -175,6 +175,9 @@ export class StickFigure {
   private skidPower = 0;
   private skidWeight = 0;
   private pose = idlePose(0);
+  /** Where the last draw put the head centre and, when holding, the hands. */
+  readonly head = { x: 0, y: 0 };
+  readonly reach = { x: 0, y: 0 };
 
   update(dt: number, m: FigureMotion): void {
     this.time += dt;
@@ -247,6 +250,7 @@ export class StickFigure {
       neck = { f: up.f * TORSO, y: hipY + up.y * TORSO };
     const head = at(neck.f + up.f * (HEAD + 0.5), 0, neck.y + up.y * (HEAD + 0.5));
     g.strokeCircle(head.x, head.y, HEAD * scale);
+    Object.assign(this.head, head);
     line(at(neck.f, 0, neck.y), at(0, 0, hipY));
 
     legs.forEach(([f, lift, width], i) => {
@@ -274,6 +278,7 @@ export class StickFigure {
         hx = Math.cos(look.aim) * 21 * scale,
         hy = Math.sin(look.aim) * 21 * scale,
         back = Math.sign(cos) * 5 * scale;
+      Object.assign(this.reach, { x: s.x + hx, y: s.y + hy });
       line(s, { x: s.x + hx * 0.5, y: s.y + hy * 0.5 + 3 * scale }, { x: s.x + hx, y: s.y + hy });
       line(s, { x: s.x + hx * 0.45, y: s.y + hy * 0.5 + 7 * scale }, { x: s.x + hx - back, y: s.y + hy + 5 * scale });
       return;

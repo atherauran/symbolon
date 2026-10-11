@@ -1059,7 +1059,14 @@ export class World extends Phaser.Scene {
       this.dust.burst(core.x - 100, core.y, this.character.color, 130, 350);
       this.args.emit({ type: 'toast', text: '𝑥 = 1', sub: 'It began with one.' });
     });
-    this.time.delayedCall(8500, () => this.args.emit({ type: 'complete', elapsed: this.save.elapsed }));
+    // The page lets go the way it took hold: in white. The epilogue fades in from it.
+    this.time.delayedCall(7600, () => {
+      const camera = this.cameras.main;
+      camera.fade(1100, 250, 251, 255);
+      camera.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () =>
+        queueMicrotask(() => this.args.emit({ type: 'complete', elapsed: this.save.elapsed })),
+      );
+    });
   }
 
   private stealOperator(): void {
