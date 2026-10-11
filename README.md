@@ -20,6 +20,16 @@ npm run check       # TypeScript only
 npm test            # Math, physics-law, and authored-rail checks; no browser automation
 ```
 
+### Recording a playthrough
+
+```sh
+npm run record                            # full playthrough → recordings/symbolon-playthrough.mp4
+npm run record -- --from 3.0 --to 4.0     # one stretch: start at a checkpoint (region.zone), stop on reaching another
+npm run record -- --dry                   # play without rendering or capturing, to test the autopilot quickly
+```
+
+`scripts/record/` plays the whole campaign with an autopilot and writes an MP4 with sound. Falsehoods, 𝑥's attacks, spikes and charges are made harmless; otherwise it plays with real mouse and keyboard input and a drawn cursor, carrying or throwing symbols, repairing Falsehoods for their symbols, and running and jumping across every device. The page runs on a virtual clock and each frame is stepped and captured, so the video is smooth on any machine; a full run takes about an hour and a quarter to render. It needs Chromium for Playwright and `ffmpeg`. The autopilot plays Blue by default (`--pen`); the food-chain lift needs Blue's jump.
+
 The build bundles its fonts and requires no remote services. Nothing is published online.
 
 ## Controls
