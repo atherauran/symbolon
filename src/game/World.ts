@@ -23,8 +23,6 @@ export interface RuntimeArgs {
   audio: AudioEngine;
   emit: (event: GameEvent) => void;
   chapterCard?: boolean;
-  /** Arriving from the prologue: the world fades in from the white of the page. */
-  fromPrologue?: boolean;
 }
 /** A Falsehood: a false statement that walks. Throws that move it toward true repair it. */
 interface Enemy {
@@ -101,12 +99,14 @@ const RAIL_X = 655,
 const FOCUS_PER_CONCEPT = 0.2,
   FOCUS_BONUS_CAP = 4,
   HIT_COST = 1,
+  /** 𝑥's thrown symbols hit harder than walking into things. */
+  PROJECTILE_COST = 1.5,
   /** Focus regained per second with empty hands. Kept under HIT_COST / 1.5 s of invulnerability so constant hits still drain it. */
   FOCUS_REGEN = 0.4,
   /** Focus spent per second while holding or editing during combat. */
   FOCUS_DRAIN = 0.6;
 /** Seconds between replacements for fallen Falsehoods while a zone is unsolved. */
-const REINFORCE_DELAY = 10;
+const REINFORCE_DELAY = 12;
 /** Uses before a control's hint retires. */
 const TEACH_USES = 3;
 const LIE_SIZE = { small: 24, large: 30, huge: 36 };
@@ -227,10 +227,10 @@ export class World extends Phaser.Scene {
       this.commitSave();
     }
   }
-  /** The hint line: control reminders the player has not yet learned. */
-  private hintFor(parts: [string, string][]): string {
+  /** The hint line: control reminders the player has not yet learned. A null control never retires. */
+  private hintFor(parts: [string | null, string][]): string {
     return parts
-      .filter(([control]) => !this.save.taught.includes(control))
+      .filter(([control]) => !control || !this.save.taught.includes(control))
       .map(([, words]) => words)
       .join('     ·     ');
   }
@@ -282,6 +282,7 @@ export class World extends Phaser.Scene {
     this.cur = this.buildZone(start.region, start.index);
     this.leftBound = this.cur.ox;
     this.barrier = this.addPlatform(this.cur.ox - 10, GY - 520, 20, 1400, true);
+    this.barrier.rect.setFillStyle(0x2c3338, 1);
     this.loadAhead();
 
     this.player = this.add.rectangle(this.cur.ox + 100, 563, 24, 62, 0xffffff, 0).setDepth(10);
@@ -309,9 +310,8 @@ export class World extends Phaser.Scene {
     this.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) =>
       this.cycleRack(dy > 0 ? 1 : -1),
     );
-    this.hint = text(this, 640, 663, '', 12, '#c4ccd0', false).setScrollFactor(0).setDepth(60);
-    if (this.args.fromPrologue) camera.fadeIn(1800, 250, 251, 255);
-    else if (!this.args.settings.reducedMotion) {
+    this.hint = text(this, 640, 663, '', 16, '#c4ccd0', false).setScrollFactor(0).setDepth(60);
+    if (!this.args.settings.reducedMotion) {
       camera.setZoom(this.phase ? 0.94 : 1.04);
       this.tweens.add({ targets: camera, zoom: 1, duration: 1900, ease: 'Sine.easeInOut' });
     }
@@ -486,12 +486,12 @@ export class World extends Phaser.Scene {
     this.hitCount = this.bossStun = this.counterLock = 0;
     this.attackTimer = this.phase ? 4.5 : 6;
     this.introSafe = this.cur.region === 0 && this.cur.index === 0 ? 9 : 3;
-    this.reinforceTimer = 8;
+    this.reinforceTimer = REINFORCE_DELAY;
     this.cameo?.destroy();
     this.cameo = undefined;
     if (this.phase) this.buildBoss();
     else
-      for (let i = 0; i < (beat.enemies ?? 0); i++)
+      for (let i = 0; i < this.enemyCap; i++)
         this.spawnEnemy(this.cur.ox + (beat.layout === 'device' ? 330 + i * 190 : 790 + i * 330), 570);
     if (!this.phase && beat.hazard && this.chapter >= 2)
       this.cameo = new Formula(this, this.cur.ox + 1030, 230, '𝑥', 56, '#aab1b5').setDepth(4);
@@ -648,9 +648,14 @@ export class World extends Phaser.Scene {
     this.enemies = this.enemies.filter((e) => e !== enemy);
   }
 
+  /** Falsehoods a zone holds at once: one fewer than its beat lists, but never none, since their drops can be needed. */
+  private get enemyCap(): number {
+    const n = this.beat.enemies ?? 0;
+    return n > 1 ? n - 1 : n;
+  }
   /** Until the zone is solved, fallen enemies are replaced from whichever side the player is not on. */
   private reinforce(dt: number): void {
-    if (this.phase || this.cur.solved || this.transition || this.enemies.length >= (this.beat.enemies ?? 0)) return;
+    if (this.phase || this.cur.solved || this.transition || this.enemies.length >= this.enemyCap) return;
     this.reinforceTimer -= dt;
     if (this.reinforceTimer > 0) return;
     this.reinforceTimer = REINFORCE_DELAY;
@@ -699,7 +704,6 @@ export class World extends Phaser.Scene {
     if (rack) {
       rack.cycle(direction);
       this.args.audio.play('grab');
-      this.teach('choose');
     }
   }
   private selectedSlot(): number {
@@ -906,7 +910,8 @@ export class World extends Phaser.Scene {
     this.args.emit({
       type: 'toast',
       text: this.rail.display(),
-      sub: learned.length ? `Learned ${learned.map(notation).join(', ')}.` : 'Now use what you made.',
+      sub: learned.length ? `Learned:  ${learned.map(notation).join('   ·   ')}` : 'Now use what you made.',
+      learned: learned.length > 0,
     });
   }
 
@@ -1129,6 +1134,7 @@ export class World extends Phaser.Scene {
       enemy.resolved = 0.7;
       enemy.label.setColor(this.character.hex);
       this.args.audio.play('solve');
+      this.teach('repair');
     }
   }
   /** A repaired Falsehood dissolves and leaves its token behind. */
@@ -1137,9 +1143,9 @@ export class World extends Phaser.Scene {
     this.spawnToken(enemy.token, enemy.rect.x, Math.min(enemy.rect.y, 580)).body.setVelocity(0, -200);
     this.removeEnemy(enemy);
   }
-  private damage(fromX: number): void {
+  private damage(fromX: number, cost = HIT_COST): void {
     if (this.invulnerable > 0 || this.dying || this.transition) return;
-    this.focus = Math.max(0, this.focus - HIT_COST);
+    this.focus = Math.max(0, this.focus - cost);
     this.invulnerable = 1.5;
     this.vx = this.player.x < fromX ? -270 : 270;
     this.vy = -250;
@@ -1241,7 +1247,7 @@ export class World extends Phaser.Scene {
       bolt.glyph.setPosition(bolt.x, bolt.y);
       if (bolt.friendly) bolt.glyph.setAlpha(0.55);
       if (!bolt.friendly && Phaser.Math.Distance.Between(bolt.x, bolt.y, this.player.x, this.player.y) < 31) {
-        this.damage(bolt.x);
+        this.damage(bolt.x, PROJECTILE_COST);
         bolt.age = 10;
       }
       if (bolt.age > 8 || bolt.x < view.x - 300 || bolt.x > view.right + 300 || bolt.y > 900 || bolt.y < -300) {
@@ -1656,7 +1662,11 @@ export class World extends Phaser.Scene {
         live === this.cur ? (this.held?.source ?? null) : null,
         this.character.id === 'yellow',
       );
-    const rack = this.nearbyRack();
+    const rack = this.nearbyRack(),
+      // Until a few are repaired, a Falsehood in play explains itself.
+      lies: [string, string][] = this.enemies.some((e) => !e.resolved)
+        ? [['repair', 'Throw numbers at Falsehoods to make them true']]
+        : [];
     this.hint.setText(
       nearby
         ? this.hintFor(
@@ -1674,19 +1684,12 @@ export class World extends Phaser.Scene {
         : rack
           ? this.hintFor([
               ['take', `E  take ${notation(rack.source)}`],
-              ['choose', 'Scroll / Q  choose symbol'],
-              ['choose', `${rack.index + 1} / ${rack.choices.length}`],
+              [null, 'Scroll / Q  choose symbol'],
+              [null, `${rack.index + 1} / ${rack.choices.length}`],
             ])
           : this.held
-            ? this.hintFor([
-                ['take', 'E  drop'],
-                ['throw', 'Aim + click  throw'],
-              ])
-            : this.hintFor([
-                ['move', 'A D  move'],
-                ['jump', 'Space  jump'],
-                ['take', 'E  pick up'],
-              ]),
+            ? this.hintFor([['take', 'E  drop'], ['throw', 'Aim + click  throw'], ...lies])
+            : this.hintFor([['move', 'A D  move'], ['jump', 'Space  jump'], ['take', 'E  pick up'], ...lies]),
     );
   }
 

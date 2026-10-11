@@ -103,7 +103,7 @@ const idlePose = (time: number) => {
 };
 
 /** Stride geometry at run intensity r: stance-foot travel and the fraction of the cycle a foot is planted. */
-const stride = (r: number) => ({ step: lerp(14, 34, r), stance: lerp(0.58, 0.38, r) });
+const stride = (r: number) => ({ step: lerp(16, 36, r), stance: lerp(0.5, 0.27, r) });
 
 function runPose(phase: number, r: number): Pose {
   const { step, stance } = stride(r),
@@ -143,6 +143,12 @@ function skidPose(k: number, idle: Pose): Pose {
     [b, to] = keys[i];
   return mix(from, to, smooth((k - a) / (b - a)));
 }
+
+/** Title stance: feet planted apart, the near hand reaching out for something just ahead, the other hanging back. */
+const reachPose = (time: number) => {
+  const breath = Math.sin(time * 2.2);
+  return pose(24.8 + breath * 0.2, 0.07, [6, 0, -5.5, 0], [1.85 + Math.sin(time) * 0.04, -0.12, -0.6, 0.4], 4.5, 0.35);
+};
 
 const RISE = pose(26.5, 0.1, [7, 10, -5, 2.5], [-0.5, 1, 0.8, 1.2], 4, 0.3),
   FALL = pose(26, 0.02, [5, 4, -4, 0.5], [-0.9, 0.7, 1.4, 0.6], 4.5, 0.45);
@@ -229,6 +235,13 @@ export class StickFigure {
       moving = Math.max(smooth(r * 3), this.skid >= 0 ? 1 - k : 0, this.air),
       side = lerp(0.5, 0.14, moving);
     this.yaw = lerp(this.yaw, dir > 0 ? side : Math.PI - side, Math.min(1, dt * 16));
+  }
+
+  /** Holds the title stance instead of simulating motion. */
+  stand(dt: number): void {
+    this.time += dt;
+    this.pose = reachPose(this.time);
+    this.yaw = 0.5;
   }
 
   draw(g: Phaser.GameObjects.Graphics, x: number, y: number, color: number, look: FigureLook, scale = 1): void {

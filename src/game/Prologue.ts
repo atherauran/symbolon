@@ -17,10 +17,11 @@ const PAPER = { x: 508, y: 392, row: 33, slant: 7, advance: 28 };
 const SINK: [number, number] = [600, 445];
 /** Pens lie side by side at the desk's front edge, tip toward the paper. */
 const PEN = { x: 800, y: 505, gap: 50, length: 92, tilt: -1.15 };
-/** Seated kid: the hip on the chair, the torso bent over the desk, feet out of sight under it. */
+/** Seated kid: the hip on the chair, the torso bent over the desk, both feet on the floor under it. */
 const KID = {
   hip: [402, 443],
-  foot: [498, 536],
+  foot: [486, 584],
+  otherFoot: [524, 588],
   lean: 0.35,
   /** Where the hands rest on the desk until a pen is picked. */
   rest: [535, 450],
@@ -76,7 +77,7 @@ export class Prologue extends Phaser.Scene {
     this.glyphs = [];
   }
   create(): void {
-    this.cameras.main.setBackgroundColor('#06080d').setZoom(1).centerOn(640, 360);
+    this.cameras.main.setBackgroundColor('#06080d').setZoom(1).centerOn(640, 360).fadeIn(900, 6, 8, 13);
     this.g = this.add.graphics();
     ROWS.forEach((row, r) =>
       [...row].forEach((ch, col) => {
@@ -193,9 +194,12 @@ export class Prologue extends Phaser.Scene {
     this.room(g);
     this.chair(g);
     // The legs go under the desk, so the desk is drawn over them.
-    g.lineStyle(width, color, 1 - kid.pull * 0.6).strokePoints(
-      [kid.hip, kid.knee, kid.foot].map(([x, y]) => new Phaser.Geom.Point(x, y)),
-    );
+    g.lineStyle(width, color, 1 - kid.pull * 0.6);
+    for (const leg of [
+      [kid.hip, kid.knee, kid.foot],
+      [kid.hip, kid.otherKnee, kid.otherFoot],
+    ])
+      g.strokePoints(leg.map(([x, y]) => new Phaser.Geom.Point(x, y)));
     this.desk(g);
     this.page(g, t, picked);
     g.lineStyle(width, color, 1 - kid.pull * 0.6).strokeCircle(...kid.head, BODY.head * (1 - 0.85 * kid.pull));
@@ -315,8 +319,10 @@ export class Prologue extends Phaser.Scene {
       hand,
       other,
       foot: KID.foot as Point,
+      otherFoot: KID.otherFoot as Point,
       // Knees bend up and forward; elbows drop back toward the body.
       knee: joint(hip, KID.foot as Point, BODY.thigh, BODY.shin, -1),
+      otherKnee: joint(hip, KID.otherFoot as Point, BODY.thigh, BODY.shin, -1),
       elbow: joint(shoulder, hand, BODY.upperArm, BODY.forearm, 1),
       otherElbow: joint(shoulder, other, BODY.upperArm, BODY.forearm, 1),
     };

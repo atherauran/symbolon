@@ -225,7 +225,12 @@ export type GameEvent =
       phase: string;
       progress: number;
     }
-  | { type: 'toast'; text: string; sub?: string }
+  | {
+      type: 'toast';
+      text: string;
+      sub?: string;
+      /** The sub lists newly learned symbols and laws. */ learned?: boolean;
+    }
   | { type: 'chapter'; chapter: number; title: string; knowledge: string }
   | { type: 'pause' }
   | { type: 'death' }

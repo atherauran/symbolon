@@ -179,7 +179,7 @@ const ENCOUNTERS: Draft[][] = [
     device(
       'Under the lens',
       'Make the cell’s image fit the lock exactly.',
-      rail('Magnification · eyepiece × objective', ['5', '*', '10']),
+      rail('Magnification = eyepiece × objective', ['5', '*', '10']),
       { kind: 'microscope', mode: 'zoom', specimen: 0.1, gate: 5 },
       { enemies: 2, enemyTokens: ['5', '10'], hazard: 'bolts', law: 'magnification', loose: [['*', 200, 590]] },
     ),

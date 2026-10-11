@@ -13,6 +13,7 @@ import { CHARACTERS, type CharacterId, type CheckpointState, type GameEvent, typ
 const root = document.querySelector<HTMLDivElement>('#interface')!;
 const SAVE_KEY = 'symbolon.save.v2';
 const SETTINGS_KEY = 'symbolon.settings.v1';
+const TITLE_FADE = 600;
 function read<T>(key: string): T | null {
   try {
     return JSON.parse(localStorage.getItem(key) ?? 'null') as T | null;
@@ -97,6 +98,13 @@ function title(): void {
     <footer class="chapter-strip">${REGIONS.map((chapter, i) => `<button class="chapter-link ${i === 0 ? 'available' : ''}" data-action="chapters"><span class="chapter-number">0${i + 1}</span><span>${chapter.title}</span><span class="chapter-symbol">${chapter.symbol}</span></button>`).join('')}</footer>
   </div>`;
 }
+/** The title fades to black before the desk scene fades in. */
+function leaveTitle(): void {
+  screen = 'leaving';
+  root.querySelector('.title-screen')?.classList.add('leaving');
+  game.scene.getScene('Backdrop').cameras.main.fade(TITLE_FADE, 9, 11, 13);
+  setTimeout(prologue, TITLE_FADE);
+}
 /** The prologue's pen pick chooses the character. */
 function prologue(): void {
   screen = 'prologue';
@@ -135,15 +143,13 @@ function launch(save: CheckpointState, fromPrologue = false): void {
   saved = { ...save };
   persist(SAVE_KEY, saved);
   showHud();
+  // The page's white clears to the chapter card alone; the world appears only once it begins.
+  if (fromPrologue) {
+    document.getElementById('chapter-card')?.classList.add('opaque');
+    root.insertAdjacentHTML('beforeend', '<div class="whiteout"></div>');
+  }
   game.scene.sleep('Backdrop');
-  game.scene.start('World', {
-    save: saved,
-    settings,
-    audio,
-    emit: onEvent,
-    chapterCard: save.zone === 0,
-    fromPrologue,
-  });
+  game.scene.start('World', { save: saved, settings, audio, emit: onEvent, chapterCard: save.zone === 0 });
 }
 function showHud(): void {
   screen = 'playing';
@@ -186,6 +192,7 @@ function onEvent(event: GameEvent): void {
     const sub = document.createElement('span');
     title.textContent = event.text;
     sub.textContent = event.sub ?? '';
+    sub.classList.toggle('learned', Boolean(event.learned));
     element.append(title, sub);
     element.classList.add('visible');
     toastTimer = setTimeout(() => element.classList.remove('visible'), 4200);
@@ -274,10 +281,13 @@ root.addEventListener('click', (event) => {
   }
   const action = target.dataset.action;
   if (action === 'title') title();
-  else if (action === 'prologue') prologue();
+  else if (action === 'prologue') leaveTitle();
   else if (action === 'continue' && saved) launch(saved);
   else if (action === 'begin-chapter') {
-    document.getElementById('chapter-card')?.classList.remove('visible');
+    const card = document.getElementById('chapter-card');
+    card?.classList.remove('visible');
+    // Stay opaque while fading out, so the world appears through the fade rather than at once.
+    setTimeout(() => card?.classList.remove('opaque'), 700);
     game.scene.resume('World');
   } else if (action === 'chapters') chapters();
   else if (action === 'pause') pause();
